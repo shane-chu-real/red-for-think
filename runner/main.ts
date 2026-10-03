@@ -105,10 +105,10 @@ async function cmdTest() {
       role: null,
       prompt_version: "test",
       instructions: "지시에 따라 JSON 하나만 출력합니다.",
-      input: [{ role: "user", content: `reply 필드에 OK라고만 넣은 JSON을 출력하십시오. 스키마: ${JSON.stringify(schema)}` }],
+      input: [{ role: "developer", content: `reply 필드에 OK라고만 넣은 JSON 객체 하나만 출력하십시오. 스키마: ${JSON.stringify(schema)}` }],
       schema_name: "connection_test",
       schema,
-      context: {},
+      context: { purpose: "연결 시험" },
       allowed: { claim_ids: [], fact_ids: [], source_ids: [], issue_ids: [], candidate_keys: [], condition_ids: {}, slide_ids: [] },
       plan_version_id: null,
     },
@@ -122,29 +122,27 @@ async function cmdStart(mock: boolean) {
   if (!conn) throw new AppError("NOT_PAIRED", "웹앱과 연결되어 있지 않습니다. 먼저 npm run runner -- pair 를 실행해 주세요.");
   const provider: Provider = mock ? new MockProvider() : chatgptProvider();
   let models: { slug: string; display_name: string }[] = [];
-  if (mock) {
-    log("모의 모드로 시작합니다. 실제 AI 응답이 아니며 결과에 [모의] 표시가 붙습니다.");
-    models = await provider.listModels();
-  } else {
-    const creds = loadCredentials();
-    if (!creds?.tokens) log("ChatGPT에 로그인되어 있지 않습니다. 작업은 가져오지 않고 상태만 보고합니다 → runner login");
-    else if (!planUsageEnabled(creds)) log("로그인됨 / AI 플랜 사용 비활성: 추론하지 않고 상태만 보고합니다.");
-    else models = await provider.listModels().catch((e) => (log(`모델 목록 조회 실패: ${e.message}`), []));
-  }
-  const ready = mock || planUsageEnabled(loadCredentials());
   const ctrl = new AbortController();
   process.on("SIGINT", () => (log("종료합니다."), ctrl.abort()));
   process.on("SIGTERM", () => ctrl.abort());
   const app = new AppClient(conn);
   log(`실행기 시작 → ${conn.url} · 동시 실행 1건 · Ctrl+C로 종료`);
-  if (!ready) {
-    // 로그인 전: 화면에 상태만 알리고 작업은 가져가지 않는다.
-    while (!ctrl.signal.aborted) {
+  if (mock) log("모의 모드입니다. 실제 AI 응답이 아니며 결과에 [모의] 표시가 붙습니다.");
+  else {
+    // 로그인·플랜 권한이 확인될 때까지 화면에 상태만 알리고 작업은 가져가지 않는다.
+    let told = "";
+    while (!ctrl.signal.aborted && !planUsageEnabled(loadCredentials())) {
+      const creds = loadCredentials();
+      const msg = creds?.tokens ? "로그인됨 / AI 플랜 사용 비활성: 추론하지 않고 상태만 보고합니다." : "ChatGPT에 로그인되어 있지 않습니다. 다른 터미널에서 npm run runner -- login 을 실행해 주세요.";
+      if (msg !== told) log(msg);
+      told = msg;
       await app.heartbeat(statusObject(provider, models)).catch((e) => log(`상태 보고 실패: ${e.message}`));
-      await new Promise((r) => setTimeout(r, 30_000));
+      await new Promise((r) => setTimeout(r, 15_000));
     }
-    return;
+    if (ctrl.signal.aborted) return;
+    log("ChatGPT 플랜 사용 권한을 확인했습니다. 작업을 가져옵니다.");
   }
+  models = await provider.listModels().catch((e) => (log(`모델 목록 조회 실패: ${e.message}`), []));
   await runLoop({
     app,
     provider,

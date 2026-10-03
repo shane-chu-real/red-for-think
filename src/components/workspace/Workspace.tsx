@@ -7,7 +7,7 @@ import { apiGet, apiPost, kst, newKey } from "@/lib/client";
 import { StatusBar } from "../StatusBar";
 import { Badge, Button, Card, ErrorNote, inputClass } from "../ui";
 import { IssueCard } from "./IssueCard";
-import { AiWork, GeneratingPanel, IntakePanel, OutlinePanel, OutputsPanel, ReplyPanel, ReviewPanel, RevisionPanel, SummaryPanel } from "./panels";
+import { AiWork, BackToReply, GeneratingPanel, IntakePanel, OutlinePanel, OutputsPanel, ReplyPanel, ReviewPanel, RevisionPanel, SummaryPanel } from "./panels";
 import { PlanView, type Act, type ProjectView } from "./shared";
 
 type SaveState = "idle" | "saving" | "saved" | "failed";
@@ -162,6 +162,7 @@ export function Workspace({ projectId }: { projectId: string }) {
             {state.phase === "VERIFYING" && (
               <Card title="재검증">
                 <p className="text-sm text-slate-600">진행자가 실제 적용 결과와 근거로 해소 조건을 하나씩 검증하고 있습니다.</p>
+                <BackToReply {...props} />
               </Card>
             )}
             {state.phase === "ROUND_SUMMARY" && <SummaryPanel {...props} />}

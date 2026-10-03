@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { mockOutput } from "@/core/mock";
-import type { RunPayload } from "@/core/prompts";
+import { payloadInput, type RunPayload } from "@/core/prompts";
 import { unresolvedCritical } from "@/core/state";
 import type { DecisionStatus, PlanDocContent } from "@/core/types";
 import type { Db } from "@/server/db";
@@ -340,8 +340,10 @@ describe("기능 검증 사례", () => {
     const claim = await claimRun(h.db, h.runnerId);
     if (claim.status !== "claimed") throw new Error("no job");
     expect(claim.job.payload.instructions).toContain("충돌하면 숨기지 말고");
-    expect(claim.job.payload.input[1].content).toContain("300명");
-    expect(claim.job.payload.input[1].content).toContain("200명");
+    const sent = payloadInput(claim.job.payload);
+    expect(sent.map((m) => m.role)).toEqual(["developer", "user"]);
+    expect(sent[1].content).toContain("300명");
+    expect(sent[1].content).toContain("200명");
     await completeRun(h.db, h.runnerId, claim.job.run_id, { request_key: claim.job.request_key, terminal_event: "response.completed", text: mockOutput(claim.job.payload), output_mode: "mock" });
     await h.ok(id, "REQUEST_OUTLINE");
     await h.drain();

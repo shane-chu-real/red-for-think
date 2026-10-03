@@ -134,6 +134,23 @@ describe("해소 판정 규칙", () => {
     expect(s.end?.reason).toBe("ROUND_LIMIT");
   });
 
+  it("변경안 작업이 실패하면 다시 시도하거나 응답 단계로 돌아갈 수 있다", async () => {
+    const h = await makeHarness();
+    const id = await h.toReply();
+    await h.ok(id, "RESPOND_ISSUES", { responses: [{ issue_id: "I-001", response_type: "accept", text: "" }] });
+    h.override("revise", () => "FAIL");
+    await h.ok(id, "PROCEED");
+    await h.drain();
+    let s = await h.state(id);
+    expect(s.phase).toBe("REVISION_CONFIRM");
+    expect(s.pending_runs.map((r) => r.status)).toEqual(["failed"]);
+    await h.ok(id, "RESUME_REPLY");
+    s = await h.state(id);
+    expect(s.phase).toBe("WAITING_REPLY");
+    expect(s.pending_runs).toEqual([]);
+    expect(s.issues.find((i) => i.display_id === "I-001")!.state).toBe("CHANGE_PENDING"); // 수용은 그대로 '변경 대기'
+  });
+
   it("뼈대 확인 전에는 검토를 시작하지 않는다", async () => {
     const h = await makeHarness();
     const id = await h.create({ type: "ai_task", idea: "영업 보고서 요약 AI", audience: "executive" });

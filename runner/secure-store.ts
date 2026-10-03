@@ -49,23 +49,36 @@ function atomicWrite(file: string, content: string) {
   fs.renameSync(tmp, file);
 }
 
+// 파일이 바뀌지 않았으면 다시 복호화하지 않는다(이 프로세스의 메모리에만 둔다).
+const cache = new Map<string, { mtimeMs: number; value: unknown }>();
+
 export function saveSecret(name: string, value: unknown) {
   const file = path.join(ensureDir(), `${name}.bin`);
   const plain = Buffer.from(JSON.stringify(value), "utf8").toString("base64");
   const body = process.platform === "win32" ? { v: 1, scheme: "dpapi", data: dpapi("Protect", plain) } : { v: 1, scheme: "file-0600", data: plain };
   atomicWrite(file, JSON.stringify(body));
+  cache.set(file, { mtimeMs: fs.statSync(file).mtimeMs, value: structuredClone(value) });
 }
 
 export function loadSecret<T>(name: string): T | null {
   const file = path.join(dataDir(), `${name}.bin`);
-  if (!fs.existsSync(file)) return null;
+  if (!fs.existsSync(file)) {
+    cache.delete(file);
+    return null;
+  }
+  const mtimeMs = fs.statSync(file).mtimeMs;
+  const hit = cache.get(file);
+  if (hit && hit.mtimeMs === mtimeMs) return structuredClone(hit.value) as T;
   const body = JSON.parse(fs.readFileSync(file, "utf8")) as { scheme: string; data: string };
   const plain = body.scheme === "dpapi" ? dpapi("Unprotect", body.data) : body.data;
-  return JSON.parse(Buffer.from(plain, "base64").toString("utf8")) as T;
+  const value = JSON.parse(Buffer.from(plain, "base64").toString("utf8")) as T;
+  cache.set(file, { mtimeMs, value: structuredClone(value) });
+  return value;
 }
 
 export function deleteSecret(name: string) {
   const file = path.join(dataDir(), `${name}.bin`);
+  cache.delete(file);
   if (fs.existsSync(file)) fs.rmSync(file);
 }
 

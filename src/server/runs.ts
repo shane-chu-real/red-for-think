@@ -29,15 +29,26 @@ async function bump(q: Queryable, scope: string) {
   await q.query("insert into usage_counters(scope, count) values ($1, 1) on conflict (scope) do update set count = usage_counters.count + 1", [scope]);
 }
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// 잠금 순서는 항상 프로젝트 → 작업. 사용자 동작(프로젝트를 잠근 뒤 작업을 취소)과 같은 순서라 교착이 생기지 않는다.
+async function lockProjectAndRun(q: Queryable, runId: string): Promise<{ proj: any; run: any } | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(runId)) return null;
+  const peek = (await q.query("select project_id from ai_runs where run_id = $1", [runId])).rows[0];
+  if (!peek) return null;
+  const proj = (await q.query("select state, state_version from projects where project_id = $1 for update", [peek.project_id])).rows[0];
+  const run = (await q.query("select * from ai_runs where run_id = $1 for update", [runId])).rows[0];
+  return proj && run ? { proj, run } : null;
+}
+
 // 임대 시간이 지난 작업은 실패로 표시한다. 이미 시작된 요청의 중복 사용을 피하려고 자동으로 다시 넣지 않는다.
 export async function expireLeases(db: Db): Promise<number> {
   const { rows } = await db.query("select run_id from ai_runs where status = 'claimed' and lease_expires_at < now()");
   let n = 0;
   for (const r of rows) {
     const done = await db.tx(async (q) => {
-      const run = (await q.query("select * from ai_runs where run_id = $1 for update", [r.run_id])).rows[0];
-      if (!run || run.status !== "claimed" || new Date(run.lease_expires_at).getTime() > Date.now()) return false;
-      await markFailed(q, run, "LEASE_EXPIRED", "실행기가 제한 시간 안에 결과를 보내지 않았습니다.", null);
+      const locked = await lockProjectAndRun(q, r.run_id);
+      if (!locked || locked.run.status !== "claimed" || new Date(locked.run.lease_expires_at).getTime() > Date.now()) return false;
+      await markFailed(q, locked.proj, locked.run, "LEASE_EXPIRED", "실행기가 제한 시간 안에 결과를 보내지 않았습니다.", null);
       return true;
     });
     if (done) n += 1;
@@ -45,15 +56,12 @@ export async function expireLeases(db: Db): Promise<number> {
   return n;
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-async function markFailed(q: Queryable, run: any, code: string, message: string, body: { http_status?: number; provider_request_id?: string } | null) {
+async function markFailed(q: Queryable, proj: any, run: any, code: string, message: string, body: { http_status?: number; provider_request_id?: string } | null) {
   const ctx = makeCtx();
   await q.query(
     "update ai_runs set status = 'failed', error_code = $2, error_message = $3, provider_request_id = coalesce($4, provider_request_id), finished_at = $5 where run_id = $1",
     [run.run_id, code, message.slice(0, 500), body?.provider_request_id ?? null, ctx.now],
   );
-  const proj = (await q.query("select state, state_version from projects where project_id = $1 for update", [run.project_id])).rows[0];
-  if (!proj) return;
   const res = applyRunFailure(proj.state as ProjectState, run.run_id, code, message, ctx);
   if (res.state === proj.state) return;
   await persist(q, { beforeVersion: proj.state_version, res, action: `RUN_FAILED:${run.task}`, requestKey: `${run.request_key}:fail:${code}`, actor: "runner", reason: code, now: ctx.now });
@@ -147,8 +155,9 @@ export type CompleteResult = { status: "succeeded" | "superseded" | "invalid" | 
 
 export async function completeRun(db: Db, runnerId: string, runId: string, body: CompleteBody): Promise<CompleteResult> {
   return db.tx(async (q) => {
-    const run = (await q.query("select * from ai_runs where run_id = $1 for update", [runId])).rows[0];
-    if (!run) return { status: "rejected", message: "없는 작업입니다." };
+    const locked = await lockProjectAndRun(q, runId);
+    if (!locked) return { status: "rejected", message: "없는 작업입니다." };
+    const { run, proj } = locked;
     if (run.runner_id !== runnerId) return { status: "rejected", message: "이 실행기가 가져간 작업이 아닙니다." };
     // 호출 도중 사용자가 마무리 등으로 작업을 취소했다: 늦게 온 응답은 보존만 하고 적용하지 않는다.
     if (run.status === "cancelled" && body.request_key === run.request_key && !run.result_text) {
@@ -166,7 +175,6 @@ export async function completeRun(db: Db, runnerId: string, runId: string, body:
       return { status: "rejected", message: "완료 이벤트(response.completed)가 확인되지 않은 결과입니다." };
     }
     const ctx = makeCtx();
-    const proj = (await q.query("select state, state_version from projects where project_id = $1 for update", [run.project_id])).rows[0];
     const state = proj.state as ProjectState;
     const meta = [body.text, body.output_mode, body.model_slug ?? null, body.provider_request_id ?? null, body.usage ? JSON.stringify(body.usage) : null, ctx.now];
     const pending = state.pending_runs.find((r) => r.run_id === run.run_id);
@@ -211,13 +219,14 @@ export interface FailBody {
 
 export async function failRun(db: Db, runnerId: string, runId: string, body: FailBody): Promise<{ status: "recorded" | "duplicate" | "rejected"; message?: string }> {
   return db.tx(async (q) => {
-    const run = (await q.query("select * from ai_runs where run_id = $1 for update", [runId])).rows[0];
-    if (!run) return { status: "rejected", message: "없는 작업입니다." };
+    const locked = await lockProjectAndRun(q, runId);
+    if (!locked) return { status: "rejected", message: "없는 작업입니다." };
+    const { run, proj } = locked;
     if (run.runner_id !== runnerId) return { status: "rejected", message: "이 실행기가 가져간 작업이 아닙니다." };
     if (run.status !== "claimed") return { status: "duplicate" };
     if (body.request_key !== run.request_key) return { status: "rejected", message: "오래된 시도의 결과입니다." };
     const code = String(body.error_code || "AI_ERROR").slice(0, 60);
-    await markFailed(q, run, code, String(body.message || "AI 호출에 실패했습니다."), body);
+    await markFailed(q, proj, run, code, String(body.message || "AI 호출에 실패했습니다."), body);
     if (["USAGE_LIMIT", "PLAN_NOT_ELIGIBLE", "REAUTH_REQUIRED", "SCOPE_NOT_AUTHORIZED"].includes(code)) {
       // 한도·자격·인증 문제는 새 요청을 멈춘다. 유료 경로로 넘어가지 않는다.
       await setSetting(q, "ai_paused", { paused: true, reason: `${code}: ${body.message}`.slice(0, 300), at: new Date().toISOString() });

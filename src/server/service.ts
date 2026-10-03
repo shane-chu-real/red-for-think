@@ -68,7 +68,7 @@ export async function executeEffects(q: Queryable, state: ProjectState, effects:
       case "enqueue_run": {
         sources ??= await loadSources(q, projectId);
         const payload = buildRunPayload(e.task, e.params, state, sources);
-        const inputHash = sha256(JSON.stringify({ instructions: payload.instructions, input: payload.input }));
+        const inputHash = sha256(JSON.stringify({ instructions: payload.instructions, input: payload.input, context: payload.context }));
         await q.query(
           `insert into ai_runs(run_id, project_id, task, role, status, attempts, request_key, plan_version_id, input_hash, prompt_version, payload, created_at)
            values ($1,$2,$3,$4,'queued',0,$5,$6,$7,$8,$9,$10)`,

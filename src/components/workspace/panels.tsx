@@ -262,13 +262,35 @@ export function ReplyPanel({ view, act, busy }: PanelProps) {
   );
 }
 
+// 변경안·판정 작업이 실패했을 때: 다시 시도하거나 응답 단계로 돌아갈 수 있다.
+export function BackToReply({ view, act, busy }: PanelProps) {
+  const failed = view.state.pending_runs.some((r) => r.status === "failed");
+  const waiting = view.state.pending_runs.some((r) => r.status === "queued");
+  if (!failed || waiting) return null;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <p className="text-sm text-red-800">AI 작업이 실패했습니다. 위에서 다시 시도하거나 응답 단계로 돌아갈 수 있습니다.</p>
+      <Button variant="secondary" disabled={busy} onClick={() => act("RESUME_REPLY")}>
+        응답 단계로 돌아가기
+      </Button>
+    </div>
+  );
+}
+
 export function RevisionPanel({ view, act, busy }: PanelProps) {
   const { state } = view;
   const rev = state.revision;
   const plan = state.plan.current?.content;
   const [feedback, setFeedback] = useState("");
   const waiting = state.pending_runs.some((r) => r.status === "queued");
-  if (!rev) return <Card title="변경안 확인">{waiting ? <p className="text-sm text-slate-600">작성자가 변경안을 만들고 있습니다.</p> : <p className="text-sm text-slate-600">확인할 변경안이 없습니다.</p>}</Card>;
+  if (!rev) {
+    return (
+      <Card title="변경안 확인">
+        {waiting ? <p className="text-sm text-slate-600">작성자가 변경안을 만들고 있습니다.</p> : <p className="text-sm text-slate-600">확인할 변경안이 없습니다.</p>}
+        <BackToReply view={view} act={act} busy={busy} />
+      </Card>
+    );
+  }
   const addressed = rev.addressed_issue_ids.map((id) => state.issues.find((i) => i.issue_id === id)?.display_id ?? id);
   return (
     <Card title={`변경안 확인 → 적용하면 확정 기획 v${(state.plan.current?.version_no ?? 0) + 1}`}>

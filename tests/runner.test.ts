@@ -46,13 +46,10 @@ const payload: RunPayload = {
   role: null,
   prompt_version: "t",
   instructions: "지시",
-  input: [
-    { role: "developer", content: "출력 규칙" },
-    { role: "user", content: "context" },
-  ],
+  input: [{ role: "developer", content: "출력 규칙" }],
   schema_name: "t_result",
   schema: { type: "object", properties: { reply: { type: "string" } }, required: ["reply"], additionalProperties: false },
-  context: {},
+  context: { note: "맥락" },
   allowed: { claim_ids: [], fact_ids: [], source_ids: [], issue_ids: [], candidate_keys: [], condition_ids: {}, slide_ids: [] },
   plan_version_id: null,
 };
@@ -195,7 +192,9 @@ describe("추론", () => {
     expect(body.stream).toBe(true);
     expect(body.instructions).toBe("지시");
     for (const k of ["temperature", "top_p", "max_output_tokens", "truncation", "metadata", "user", "background", "conversation", "previous_response_id"]) expect(body[k]).toBeUndefined();
-    expect((body.input as { role: string }[]).some((m) => m.role === "system")).toBe(false);
+    // system 역할 없이 developer(출력 규칙) + user(맥락)로 보낸다
+    expect((body.input as { role: string }[]).map((m) => m.role)).toEqual(["developer", "user"]);
+    expect((body.input as { content: string }[])[1].content).toContain("맥락");
     expect(ai.state.auth.every((a) => a === "Bearer oauth-access-token")).toBe(true);
     expect(p.structured).toBe("supported");
     // 목록에 보이는 모델만 쓴다

@@ -2,7 +2,7 @@
 // 유료 API 대체 호출·다른 공급자 전환·자동 구매 경로는 없다.
 import OpenAI, { APIError } from "openai";
 import { mockOutput } from "../src/core/mock";
-import type { RunPayload } from "../src/core/prompts";
+import { payloadInput, type RunPayload } from "../src/core/prompts";
 import { RESOURCE } from "./oauth";
 
 export interface ProviderJob {
@@ -166,7 +166,7 @@ export class ChatGPTSubscriptionProvider implements Provider {
         .create({
           model,
           instructions: payload.instructions,
-          input: payload.input,
+          input: payloadInput(payload),
           store: false,
           stream: true,
           ...(useSchema ? { text: { format: { type: "json_schema" as const, name: payload.schema_name, schema: payload.schema, strict: true } } } : {}),

@@ -741,7 +741,16 @@ export function reduce(prev: ProjectState, action: Action, ctx: ReducerContext):
     }
 
     case "RESUME_REPLY": {
-      requirePhase(state, ["ROUND_SUMMARY"], "응답 계속");
+      // 라운드 정리에서 응답으로 돌아가거나, 변경안·판정 작업이 실패했을 때 빠져나오는 경로
+      requirePhase(state, ["ROUND_SUMMARY", "REVISION_CONFIRM", "VERIFYING"], "응답 계속");
+      noQueued(state);
+      if (state.revision?.status === "pending") {
+        throw new DomainError("INVALID_TRANSITION", "확인 대기 중인 변경안이 있습니다. 적용하거나 '적용하지 않음'을 선택해 주세요.");
+      }
+      if (state.pending_runs.length) {
+        note(state, ctx, "user", "실패한 AI 작업을 정리하고 응답 단계로 돌아갑니다. 쟁점 상태는 그대로입니다.", "note");
+        state.pending_runs = [];
+      }
       state.phase = "WAITING_REPLY";
       return done();
     }
