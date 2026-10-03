@@ -77,7 +77,7 @@ export function loadCredentials(): Credentials | null {
 export async function discover(issuer = ISSUER): Promise<Discovery> {
   let doc: Discovery;
   try {
-    const res = await fetch(`${issuer}/.well-known/openid-configuration`);
+    const res = await fetch(`${issuer}/.well-known/openid-configuration`, { redirect: "error" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     doc = (await res.json()) as Discovery;
   } catch (e) {
@@ -169,7 +169,8 @@ function listenForCallback(port: number, state: string, timeoutMs: number): Prom
 }
 
 async function postForm(url: string, form: Record<string, string>): Promise<{ status: number; body: Record<string, unknown> }> {
-  const res = await fetch(url, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(form).toString() });
+  // 리다이렉트를 따라가지 않는다(코드·토큰이 다른 호스트로 넘어가지 않게).
+  const res = await fetch(url, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(form).toString(), redirect: "error" });
   let body: Record<string, unknown> = {};
   try {
     body = (await res.json()) as Record<string, unknown>;
@@ -233,7 +234,7 @@ export async function login(opts: OAuthOptions = {}): Promise<Credentials> {
       code_challenge: challenge,
     });
     if (!reuse) params.set("agent_name_hint", AGENT_NAME);
-    if (reuse && existing?.tokens?.id_token) params.set("id_token_hint", existing.tokens.id_token);
+    // id_token_hint(선택 항목)는 보내지 않는다: 승인 주소를 화면에 출력하고 브라우저에 넘기므로 토큰을 주소에 싣지 않는다.
     const url = `${disc.authorization_endpoint}?${params}`;
     log("브라우저에서 ChatGPT 로그인과 플랜 사용 승인을 진행해 주세요. 열리지 않으면 아래 주소를 직접 여세요.");
     log(url);
@@ -379,6 +380,7 @@ export async function logout(opts: OAuthOptions = {}): Promise<{ local: "deleted
           method: "POST",
           headers: { "content-type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({ token: creds.tokens.refresh_token, token_type_hint: "refresh_token", client_id: creds.registration.client_id }).toString(),
+          redirect: "error",
         });
         remote = res.status === 200 ? "revoked" : "failed";
         detail = res.status === 200 ? "원격 세션을 철회했습니다." : `원격 철회 실패(HTTP ${res.status}). ChatGPT 설정에서 앱 연결을 직접 해제해 주세요.`;

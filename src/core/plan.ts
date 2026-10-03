@@ -113,8 +113,10 @@ export function applyRevision(state: ProjectState, base: PlanContent, rev: Revis
     for (const section of next.sections) {
       const idx = section.claims.findIndex((c) => c.claim_id === ch.claim_id);
       if (idx < 0) continue;
-      if (ch.op === "remove") section.claims.splice(idx, 1);
-      else
+      if (ch.op === "remove") {
+        section.claims.splice(idx, 1);
+        state.plan.removed_claims = { ...(state.plan.removed_claims ?? {}), [ch.claim_id!]: versionNo };
+      } else
         section.claims[idx] = {
           ...section.claims[idx],
           text: ch.text,
@@ -140,11 +142,17 @@ export function applyRevision(state: ProjectState, base: PlanContent, rev: Revis
   return next;
 }
 
-// 해소 당시 이후로 대상 항목(또는 참조 사실)이 바뀌었는지
-export function targetsChangedSince(plan: PlanContent, targetClaimIds: string[], sinceVersion: number): boolean {
+// 기준 버전 이후로 대상 항목(또는 참조 사실)이 바뀌었거나 삭제되었는지.
+// 삭제는 '삭제된 버전'이 기준보다 뒤일 때만 변경으로 본다(한 번 재개된 뒤 변경안마다 반복 재개되지 않게).
+export function targetsChangedSince(plan: PlanContent, removed: Record<string, number> | undefined, targetClaimIds: string[], sinceVersion: number): boolean {
   const claims = new Map(plan.sections.flatMap((s) => s.claims.map((c) => [c.claim_id, c] as const)));
   return targetClaimIds.some((id) => {
     const c = claims.get(id);
-    return !c || c.updated_in_version > sinceVersion;
+    if (c) return c.updated_in_version > sinceVersion;
+    return (removed?.[id] ?? 0) > sinceVersion;
   });
+}
+
+export function hasChanges(rev: Pick<RevisionProposal, "changes" | "fact_changes" | "core_message" | "requested_decision">): boolean {
+  return rev.changes.length + rev.fact_changes.length > 0 || Boolean(rev.core_message) || Boolean(rev.requested_decision);
 }

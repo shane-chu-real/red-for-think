@@ -104,11 +104,13 @@ export function findingLimit(state: ProjectState, role: Role): number {
   return focusRoles(state).includes(role) ? LIMITS.focusRoleFindings : LIMITS.baseRoleFindings;
 }
 
-// 사용자에게 먼저 보여 줄 쟁점: 미해결 대표 쟁점을 치명 → 보완 → 사소, 그다음 ID 순으로
+// 사용자에게 먼저 보여 줄 쟁점: 추가 질문 대기 → 아직 답하지 않은 것 → 그 밖의 미해결, 각 묶음 안에서는 치명 → 보완 → 사소, ID 순.
+// 이미 보류·수용한 쟁점이 앞자리를 계속 차지해 미응답 쟁점이 가려지지 않게 한다.
 export function sortedOpenIssues(state: ProjectState): Issue[] {
+  const group = (i: Issue) => (i.follow_up && i.follow_up.answer === null ? 0 : i.state === "OPEN" ? 1 : 2);
   return state.issues
     .filter((i) => isUnresolved(i))
-    .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.display_id.localeCompare(b.display_id));
+    .sort((a, b) => group(a) - group(b) || SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.display_id.localeCompare(b.display_id));
 }
 
 export function currentRound(state: ProjectState) {

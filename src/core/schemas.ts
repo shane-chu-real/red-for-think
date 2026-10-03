@@ -77,7 +77,7 @@ export type ActionPayload<A extends ActionName> = z.output<(typeof ACTION_SCHEMA
 export type Action = { [A in ActionName]: { type: A; payload: ActionPayload<A> } }[ActionName];
 
 export function parseAction(type: string, payload: unknown): Action {
-  if (!(type in ACTION_SCHEMAS)) throw new Error(`허용되지 않은 동작입니다: ${type}`);
+  if (typeof type !== "string" || !Object.hasOwn(ACTION_SCHEMAS, type)) throw new Error(`허용되지 않은 동작입니다: ${String(type).slice(0, 40)}`);
   const schema = ACTION_SCHEMAS[type as ActionName];
   const parsed = schema.safeParse(payload ?? {});
   if (!parsed.success) {

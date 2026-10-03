@@ -10,6 +10,7 @@ const STATUS: Record<string, number> = {
   NOT_FOUND: 404,
   STORAGE_ERROR: 500,
   FORBIDDEN_ORIGIN: 403,
+  BYPASS_NOT_ALLOWED: 403,
   UNAUTHORIZED: 401,
 };
 
@@ -42,8 +43,23 @@ export async function readJson(req: Request): Promise<Record<string, unknown>> {
   }
 }
 
+// 자동화 우회 값(실행기용)으로 들어온 요청인지. 이 값은 실행기 전용 경로에만 쓰이게 하고, 화면용 경로에서는 거절한다.
+// 우회 값이 새어도 그것만으로 프로젝트를 읽거나 바꾸지 못하게 하려는 것이다.
+export function viaBypass(req: Request): boolean {
+  if (req.headers.has("x-vercel-protection-bypass") || req.headers.has("x-vercel-set-bypass-cookie")) return true;
+  try {
+    const params = new URL(req.url).searchParams;
+    return params.has("x-vercel-protection-bypass") || params.has("x-vercel-set-bypass-cookie");
+  } catch {
+    return false;
+  }
+}
+
+const BYPASS_DENIED = () => error("BYPASS_NOT_ALLOWED", "이 경로는 로그인한 브라우저에서만 쓸 수 있습니다.");
+
 // 화면용 변경 경로 공통 처리
 export async function browserPost(req: Request, fn: (db: Db, body: Record<string, unknown>) => Promise<Envelope>) {
+  if (viaBypass(req)) return BYPASS_DENIED();
   if (!sameOrigin(req)) return error("FORBIDDEN_ORIGIN", "허용되지 않은 출처의 요청입니다.");
   try {
     return respond(await fn(await getDb(), await readJson(req)));
@@ -52,7 +68,8 @@ export async function browserPost(req: Request, fn: (db: Db, body: Record<string
   }
 }
 
-export async function browserGet(fn: (db: Db) => Promise<Envelope>) {
+export async function browserGet(req: Request, fn: (db: Db) => Promise<Envelope>) {
+  if (viaBypass(req)) return BYPASS_DENIED();
   try {
     return respond(await fn(await getDb()));
   } catch (e) {

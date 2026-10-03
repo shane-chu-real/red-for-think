@@ -4,8 +4,8 @@ import { getStatus } from "@/server/status";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  return browserGet(async (db) => ({ ok: true, data: { projects: await listProjects(db), status: await getStatus(db) } }));
+export async function GET(req: Request) {
+  return browserGet(req, async (db) => ({ ok: true, data: { projects: await listProjects(db), status: await getStatus(db) } }));
 }
 
 export async function POST(req: Request) {

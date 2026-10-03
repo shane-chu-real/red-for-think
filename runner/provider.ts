@@ -94,11 +94,25 @@ export class ChatGPTSubscriptionProvider implements Provider {
     this.baseURL = opts.baseURL ?? RESOURCE;
   }
 
+  // 토큰을 얻지 못한 이유를 구분한다: 재로그인이 필요하면 멈추고, 일시 오류면 잠시 뒤 다시 시도한다.
+  private async token(): Promise<string> {
+    try {
+      return await this.opts.getAccessToken();
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code === "REAUTH_REQUIRED" || code === "NOT_SIGNED_IN") {
+        throw new ProviderError("REAUTH_REQUIRED", "ChatGPT 로그인이 만료되었거나 해제되었습니다. npm run runner -- login 으로 다시 로그인해 주세요.", { retryable: false, streamStarted: false });
+      }
+      throw new ProviderError("AI_TEMPORARY", `로그인 정보를 갱신하지 못했습니다(일시 오류): ${e instanceof Error ? e.message : e}`, { retryable: true, streamStarted: false });
+    }
+  }
+
   // 계정 토큰으로 조회한 목록에서 visibility가 list인 모델만 쓴다. 모델 이름을 코드에 고정하지 않는다.
   async listModels(force = false) {
     if (this.models && !force) return this.models;
-    const token = await this.opts.getAccessToken();
-    const res = await fetch(`${this.baseURL}/models`, { headers: { authorization: `Bearer ${token}` } });
+    const token = await this.token();
+    // 리다이렉트를 따라가지 않는다(토큰이 다른 호스트로 넘어가지 않게).
+    const res = await fetch(`${this.baseURL}/models`, { headers: { authorization: `Bearer ${token}` }, redirect: "error" });
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { error?: { code?: string } };
       const m = mapProviderError(body.error?.code, res.status);
@@ -121,24 +135,35 @@ export class ChatGPTSubscriptionProvider implements Provider {
   }
 
   async generate(job: ProviderJob): Promise<ProviderResult> {
-    const model = await this.pickModel(job.model_slug);
     const delays = this.opts.retryDelaysMs ?? [5000, 15000];
-    for (let attempt = 0; ; attempt++) {
-      const useSchema = this.structured !== "unsupported";
+    let retries = 0;
+    // 원인 필드가 표시되지 않은 '미지원 기능' 오류를 받았을 때, text.format 없이 한 번 시도해 보기 위한 표시
+    let withoutSchemaAfter: ProviderError | null = null;
+    for (;;) {
+      const useSchema = this.structured !== "unsupported" && !withoutSchemaAfter;
       try {
+        const model = await this.pickModel(job.model_slug);
         const result = await this.once(job.payload, model, useSchema);
         if (useSchema && this.structured === "unknown") this.setStructured("supported");
+        if (withoutSchemaAfter) this.setStructured("unsupported"); // text.format이 원인이었음이 확인됨
         return result;
       } catch (e) {
         if (!(e instanceof ProviderError)) throw e;
-        // 구조화 출력이 이 경로에서 거절되면: 기록을 남기고 'JSON 텍스트' 방식으로 한 번 다시 보낸다(요청이 400으로 거절되어 스트림은 시작되지 않았다).
-        if (e.code === "UNSUPPORTED_CAPABILITY" && useSchema && (!e.detail.param || e.detail.param.startsWith("text"))) {
-          this.setStructured("unsupported");
-          continue;
+        // 아래 재전송은 모두 '요청이 거절되어 스트림이 시작되지 않은 경우'에만 한다(중복 사용 방지).
+        if (e.code === "UNSUPPORTED_CAPABILITY" && !e.detail.streamStarted) {
+          if (withoutSchemaAfter) throw withoutSchemaAfter; // text.format 탓이 아니었다: 처음 오류를 그대로 보고
+          if (useSchema && e.detail.param?.startsWith("text")) {
+            // 구조화 출력이 이 경로에서 거절됨: 기록을 남기고 'JSON 텍스트' 방식으로 다시 보낸다.
+            this.setStructured("unsupported");
+            continue;
+          }
+          if (useSchema && !e.detail.param && this.structured === "unknown") {
+            withoutSchemaAfter = e;
+            continue;
+          }
         }
-        // 일시 오류는 스트림이 시작되기 전일 때만, 제한된 횟수로 다시 시도한다.
-        if (e.code === "AI_TEMPORARY" && !e.detail.streamStarted && attempt < delays.length) {
-          await new Promise((r) => setTimeout(r, delays[attempt]));
+        if (e.code === "AI_TEMPORARY" && !e.detail.streamStarted && retries < delays.length) {
+          await new Promise((r) => setTimeout(r, delays[retries++]));
           continue;
         }
         throw e;
@@ -152,9 +177,15 @@ export class ChatGPTSubscriptionProvider implements Provider {
   }
 
   private async once(payload: RunPayload, model: string, useSchema: boolean): Promise<ProviderResult> {
-    const token = await this.opts.getAccessToken();
-    // SDK의 apiKey 자리에 OAuth bearer 토큰을 넣는다. 종량제 API 키가 아니다.
-    const client = new OpenAI({ apiKey: token, baseURL: this.baseURL, maxRetries: 0, timeout: this.opts.timeoutMs ?? 9 * 60_000 });
+    const token = await this.token();
+    // SDK의 apiKey 자리에 OAuth bearer 토큰을 넣는다. 종량제 API 키가 아니다. 리다이렉트는 따라가지 않는다.
+    const client = new OpenAI({
+      apiKey: token,
+      baseURL: this.baseURL,
+      maxRetries: 0,
+      timeout: this.opts.timeoutMs ?? 9 * 60_000,
+      fetch: (url, init) => fetch(url, { ...init, redirect: "error" }),
+    });
     const parts: string[] = [];
     let started = false;
     let completed = false;
@@ -172,9 +203,10 @@ export class ChatGPTSubscriptionProvider implements Provider {
           ...(useSchema ? { text: { format: { type: "json_schema" as const, name: payload.schema_name, schema: payload.schema, strict: true } } } : {}),
         })
         .withResponse();
+      // 서버가 요청을 받아들인 시점부터는 '시작된 요청'이다. 이후 끊겨도 자동으로 다시 보내지 않는다.
+      started = true;
       requestId = request_id ?? null;
       for await (const ev of stream) {
-        started = true;
         if (ev.type === "response.output_text.delta") parts.push(ev.delta);
         else if (ev.type === "response.completed") {
           completed = true;
@@ -190,9 +222,13 @@ export class ChatGPTSubscriptionProvider implements Provider {
     } catch (e) {
       if (e instanceof ProviderError) throw e;
       if (e instanceof APIError) {
+        if (e.status === undefined && !started) {
+          // 연결 자체가 되지 않았다(요청이 서버에 받아들여지기 전): 제한적으로 다시 시도할 수 있다.
+          throw new ProviderError("AI_TEMPORARY", "AI 서버에 연결하지 못했습니다.", { requestId, retryable: true, streamStarted: false });
+        }
         const m = mapProviderError(e.code ?? undefined, e.status);
         // 스트림이 시작된 뒤의 오류는 자동으로 다시 보내지 않는다(중복 사용 방지).
-        throw new ProviderError(started && m.code === "AI_TEMPORARY" ? "AI_INCOMPLETE" : m.code, started ? `${m.message} (스트림 도중 오류)` : m.message, {
+        throw new ProviderError(started && (m.code === "AI_TEMPORARY" || m.code === "AI_ERROR") ? "AI_INCOMPLETE" : m.code, started ? `${m.message} (스트림 도중 오류)` : m.message, {
           httpStatus: e.status,
           providerCode: e.code ?? undefined,
           param: e.param ?? undefined,

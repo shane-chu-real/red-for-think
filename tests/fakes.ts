@@ -125,7 +125,19 @@ export async function startFakeAuth() {
   return { issuer: base, close: srv.close, control, seen, browser, ISSUED };
 }
 
-export type ResponsesScenario = "ok" | "cut_after_delta" | "failed_limit" | "incomplete" | "http_429" | "http_503_once" | "reject_text_format" | "http_403_not_eligible";
+export type ResponsesScenario =
+  | "ok"
+  | "cut_after_delta"
+  | "failed_limit"
+  | "incomplete"
+  | "http_429"
+  | "http_503_once"
+  | "reject_text_format"
+  | "http_403_not_eligible"
+  | "close_before_event"
+  | "failed_unsupported_after_delta"
+  | "reject_unattributed"
+  | "reject_always";
 
 export async function startFakeResponses() {
   const state = { scenario: "ok" as ResponsesScenario, text: '{"reply":"OK"}', bodies: [] as Record<string, unknown>[], auth: [] as string[], calls: 0 };
@@ -149,11 +161,18 @@ export async function startFakeResponses() {
       if (s === "http_403_not_eligible") return json(403, { error: { code: "subscription_sharing_user_not_eligible", message: "no" } });
       if (s === "http_503_once" && state.calls === 1) return json(503, { error: { code: "subscription_sharing_usage_unavailable", message: "later" } });
       if (s === "reject_text_format" && body.text) return json(400, { error: { code: "subscription_sharing_unsupported_capability", message: "unsupported", param: "text.format" } });
+      if (s === "reject_unattributed" && body.text) return json(400, { error: { code: "subscription_sharing_unsupported_capability", message: "unsupported" } });
+      if (s === "reject_always") return json(400, { error: { code: "subscription_sharing_unsupported_capability", message: "unsupported" } });
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", "x-request-id": "req_test_123" });
+      if (s === "close_before_event") return res.end(); // 요청은 받아들였지만 이벤트 없이 종료
       sse(res, { type: "response.created", response: { id: "resp_1" } });
       const half = Math.ceil(state.text.length / 2);
       sse(res, { type: "response.output_text.delta", delta: state.text.slice(0, half) });
       if (s === "cut_after_delta") return res.end(); // 완료 이벤트 없이 연결 종료
+      if (s === "failed_unsupported_after_delta") {
+        sse(res, { type: "response.failed", response: { id: "resp_1", error: { code: "subscription_sharing_unsupported_capability", message: "unsupported" } } });
+        return res.end();
+      }
       if (s === "failed_limit") {
         sse(res, { type: "response.failed", response: { id: "resp_1", error: { code: "subscription_sharing_usage_limit_exceeded", message: "limit" } } });
         return res.end();

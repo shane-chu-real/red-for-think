@@ -149,6 +149,7 @@ async function cmdStart(mock: boolean) {
     status: () => statusObject(provider, models),
     log,
     signal: ctrl.signal,
+    canRun: () => mock || planUsageEnabled(loadCredentials()),
     dailyCap: prefs().daily_cap ?? 200,
     usedToday: () => (prefs().usage?.day === today() ? prefs().usage!.count : 0),
     countRun: () => {

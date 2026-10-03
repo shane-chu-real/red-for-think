@@ -5,10 +5,11 @@ import {
   LIMITS,
   ROLES,
   ROLE_LABELS,
+  TASK_PHASES,
   type EndReason,
   type IssueState,
 } from "./constants";
-import { applyRevision, targetsChangedSince } from "./plan";
+import { applyRevision, hasChanges, targetsChangedSince } from "./plan";
 import { displayedIssueIds } from "./prompts";
 import type { Action, ActionPayload } from "./schemas";
 import {
@@ -56,9 +57,20 @@ const RESPONSE_LABELS: Record<ResponseType, string> = {
 
 export function enqueue(state: ProjectState, effects: Effect[], task: Task, params: RunParams, ctx: ReduceContext): string {
   const run_id = ctx.newId();
+  // 같은 작업을 새로 넣을 때는 이전에 실패한 항목을 치운다(나중에 그것을 재시도해 결과가 두 번 반영되지 않게).
+  if (task !== "review") state.pending_runs = state.pending_runs.filter((r) => !(r.task === task && r.status === "failed"));
   state.pending_runs.push({ run_id, task, role: params.role ?? null, status: "queued", error_code: null, error_message: null, params });
   effects.push({ type: "enqueue_run", run_id, task, params });
   return run_id;
+}
+
+// 단계가 넘어가면 그 단계에 속하지 않는 작업은 정리한다: 대기 중이면 취소하고, 실패 항목은 목록에서 뺀다.
+export function pruneStaleRuns(state: ProjectState, effects: Effect[]) {
+  const stale = state.pending_runs.filter((r) => !TASK_PHASES[r.task].includes(state.phase));
+  if (!stale.length) return;
+  const queued = stale.filter((r) => r.status === "queued").map((r) => r.run_id);
+  if (queued.length) effects.push({ type: "cancel_runs", run_ids: queued });
+  state.pending_runs = state.pending_runs.filter((r) => TASK_PHASES[r.task].includes(state.phase));
 }
 
 export function versionMeta(version: PlanVersionState): Omit<PlanVersionState, "content"> {
@@ -385,7 +397,10 @@ export function reduce(prev: ProjectState, action: Action, ctx: ReducerContext):
   const state = clone(prev);
   state.updated_at = ctx.now;
   const effects: Effect[] = [];
-  const done = (data?: unknown): ReduceResult => ({ state, effects, data });
+  const done = (data?: unknown): ReduceResult => {
+    pruneStaleRuns(state, effects);
+    return { state, effects, data };
+  };
 
   switch (action.type) {
     case "CREATE_PROJECT":
@@ -445,6 +460,7 @@ export function reduce(prev: ProjectState, action: Action, ctx: ReducerContext):
     case "CONFIRM_OUTLINE": {
       requirePhase(state, ["OUTLINE_CONFIRM"], "뼈대 확인");
       noQueued(state);
+      if (state.plan.current) throw new DomainError("INVALID_TRANSITION", "이미 확정된 기획이 있습니다. 뼈대는 한 번만 확정합니다.");
       const draft = state.outline_draft;
       if (!draft || draft.draft_id !== action.payload.draft_id) throw new DomainError("VERSION_CONFLICT", "확인하려는 뼈대가 최신 초안이 아닙니다. 새로고침해 주세요.");
       const version: PlanVersionState = {
@@ -553,9 +569,11 @@ export function reduce(prev: ProjectState, action: Action, ctx: ReducerContext):
       const { changes: _c, fact_changes: _f, ...summary } = rev;
       state.revisions.push(summary);
       state.revision = null;
+      // 실제로 바뀐 내용이 있을 때만 '적용 기록'을 남긴다. 내용 없는 변경안으로 쟁점이 해소 후보가 되지 않게 한다.
+      const changed = hasChanges(rev);
       for (const id of rev.addressed_issue_ids) {
         const issue = state.issues.find((i) => i.issue_id === id);
-        if (!issue || issue.state !== "CHANGE_PENDING") continue;
+        if (!issue || issue.state !== "CHANGE_PENDING" || !changed) continue;
         issue.applied_revision_ids.push(rev.revision_id);
         setIssueState(issue, "RECHECK_PENDING", `변경 적용(v${versionNo}) — 재검증 대기`, "user", ctx);
       }
@@ -564,7 +582,7 @@ export function reduce(prev: ProjectState, action: Action, ctx: ReducerContext):
         if (cr) cr.status = "consumed";
       }
       for (const issue of state.issues) {
-        if (issue.state === "RESOLVED" && targetsChangedSince(content, issue.target_claim_ids, issue.resolved_on_version ?? 0)) {
+        if (issue.state === "RESOLVED" && targetsChangedSince(content, state.plan.removed_claims, issue.target_claim_ids, issue.resolved_on_version ?? 0)) {
           setIssueState(issue, "RECHECK_PENDING", `전제 변경으로 재개(v${versionNo}에서 대상 항목 변경)`, "system", ctx);
         }
       }
@@ -596,8 +614,21 @@ export function reduce(prev: ProjectState, action: Action, ctx: ReducerContext):
         const change = state.issues.filter((i) => i.state === "CHANGE_PENDING");
         enqueue(state, effects, "revise", { issue_ids: change.map((i) => i.issue_id), feedback: action.payload.feedback }, ctx);
       } else {
-        note(state, ctx, "user", "변경안을 적용하지 않았습니다. 수용한 쟁점은 변경 대기로 남습니다.");
-        state.phase = "WAITING_REPLY";
+        // 적용하지 않기로 했으면 이 변경안에 묶인 변경 요청도 함께 끝낸다(같은 변경안이 계속 다시 만들어지지 않게).
+        for (const id of rev.change_request_ids) {
+          const cr = state.change_requests.find((c) => c.request_id === id);
+          if (cr?.status === "pending") cr.status = "dropped";
+        }
+        note(state, ctx, "user", "변경안을 적용하지 않았습니다. 수용한 쟁점은 '변경 대기'(미해결)로 남고, 함께 요청한 변경은 취소됩니다.");
+        // 뒤로 돌아가지 않고 이번 라운드의 남은 절차(반박 판정 → 라운드 정리)로 넘어간다.
+        const targets = judgeTargets(state);
+        if (targets.length) {
+          enqueue(state, effects, "judge", { issue_ids: targets.map((i) => i.issue_id) }, ctx);
+          state.phase = "VERIFYING";
+        } else {
+          state.phase = "ROUND_SUMMARY";
+          note(state, ctx, "moderator", roundSummaryText(state));
+        }
       }
       return done();
     }
@@ -637,13 +668,24 @@ export function reduce(prev: ProjectState, action: Action, ctx: ReducerContext):
       const rec = currentRound(state)!;
       for (const f of failed) {
         const base = rec.review_runs.find((r) => r.run_id === f.run_id);
-        if (base) base.status = "missing";
+        if (base) {
+          base.status = "missing";
+          // 기본 라운드 검토가 빠진 경우만 '검토 누락'이다. 추가 검토 실패는 누락으로 세지 않는다.
+          if (f.role && !rec.missing_roles.includes(f.role)) rec.missing_roles.push(f.role);
+        }
         const extra = rec.extra_reviews.find((r) => r.run_id === f.run_id);
         if (extra) extra.status = "failed";
-        if (f.role && !rec.missing_roles.includes(f.role)) rec.missing_roles.push(f.role);
       }
       state.pending_runs = state.pending_runs.filter((r) => !(r.task === "review" && r.status === "failed"));
-      note(state, ctx, "user", `검토 누락을 기록하고 진행합니다: ${failed.map((f) => ROLE_LABELS[f.role!]).join(", ")}. 누락이 있으면 '검토 완료'로 표시하지 않습니다.`);
+      const missedBase = failed.filter((f) => rec.review_runs.some((r) => r.run_id === f.run_id));
+      note(
+        state,
+        ctx,
+        "user",
+        missedBase.length
+          ? `검토 누락을 기록하고 진행합니다: ${missedBase.map((f) => ROLE_LABELS[f.role!]).join(", ")}. 누락이 있으면 '검토 완료'로 표시하지 않습니다.`
+          : `실패한 추가 검토(${failed.map((f) => ROLE_LABELS[f.role!]).join(", ")})는 건너뛰고 진행합니다.`,
+      );
       afterReviews(state, effects, ctx);
       return done();
     }
@@ -651,6 +693,7 @@ export function reduce(prev: ProjectState, action: Action, ctx: ReducerContext):
     case "RETRY_RUN": {
       const pr = state.pending_runs.find((r) => r.run_id === action.payload.run_id);
       if (!pr || pr.status !== "failed") throw new DomainError("INVALID_TRANSITION", "재시도할 수 있는 실패 작업이 아닙니다.");
+      if (!TASK_PHASES[pr.task].includes(state.phase)) throw new DomainError("INVALID_TRANSITION", "이미 다음 단계로 넘어가 이 작업은 다시 시도할 수 없습니다.");
       const { correction_of: _a, correction_errors: _b, previous_output: _c, ...params } = pr.params;
       const run_id = ctx.newId();
       for (const rec of state.rounds) {
@@ -735,8 +778,15 @@ export function reduce(prev: ProjectState, action: Action, ctx: ReducerContext):
       state.pending_runs = [];
       state.generation = null;
       state.end = null;
-      state.phase = "WAITING_REPLY";
       note(state, ctx, "user", "재작업을 시작합니다. 이전 산출물은 원래 스냅샷 그대로 보존됩니다.");
+      // 마무리할 때 적용하지 않고 남겨 둔 변경안이 있으면, 처리할 수 있는 단계(변경안 확인)로 돌아간다.
+      if (state.revision?.status === "pending" && state.revision.base_plan_version_id === state.plan.current?.plan_version_id) {
+        state.phase = "REVISION_CONFIRM";
+        note(state, ctx, "system", "마무리 전에 적용하지 않은 변경안이 남아 있습니다. 적용 여부를 먼저 정해 주세요.", "note");
+      } else {
+        state.revision = null;
+        state.phase = "WAITING_REPLY";
+      }
       return done();
     }
 
@@ -744,7 +794,7 @@ export function reduce(prev: ProjectState, action: Action, ctx: ReducerContext):
       // 라운드 정리에서 응답으로 돌아가거나, 변경안·판정 작업이 실패했을 때 빠져나오는 경로
       requirePhase(state, ["ROUND_SUMMARY", "REVISION_CONFIRM", "VERIFYING"], "응답 계속");
       noQueued(state);
-      if (state.revision?.status === "pending") {
+      if (state.phase === "REVISION_CONFIRM" && state.revision?.status === "pending") {
         throw new DomainError("INVALID_TRANSITION", "확인 대기 중인 변경안이 있습니다. 적용하거나 '적용하지 않음'을 선택해 주세요.");
       }
       if (state.pending_runs.length) {

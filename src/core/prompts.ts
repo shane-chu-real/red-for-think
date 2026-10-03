@@ -430,11 +430,8 @@ export function payloadInput(payload: Pick<RunPayload, "input" | "context">): Ru
   ];
 }
 
-// 사용자에게 먼저 보여 줄 쟁점 묶음 (3~5개)
+// 자유 입력 답변을 연결할 수 있는 쟁점: 미해결 전체.
+// 화면은 3~5개씩 먼저 보여 주지만 '더 보기'로 나머지도 보이므로, 어느 쟁점에 답해도 연결되어야 한다.
 export function displayedIssueIds(state: ProjectState): string[] {
-  const followUps = state.issues.filter((i) => i.follow_up && !i.follow_up.answer).map((i) => i.issue_id);
-  const top = sortedOpenIssues(state)
-    .slice(0, LIMITS.displayBatch)
-    .map((i) => i.issue_id);
-  return [...new Set([...followUps, ...top])];
+  return sortedOpenIssues(state).map((i) => i.issue_id);
 }

@@ -17,6 +17,9 @@ export interface LoopDeps {
   dailyCap?: number;
   usedToday?: () => number;
   countRun?: () => void;
+  // 지금 AI를 호출할 수 있는 상태인지(로그인·플랜 권한). 아니면 작업을 가져가지 않는다.
+  canRun?: () => boolean;
+  tempBackoffMs?: number; // 시험용: 일시 오류 뒤 대기 시간 고정
 }
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -40,7 +43,7 @@ async function submit<T>(fn: () => Promise<T>, log: (l: string) => void, signal:
   return null;
 }
 
-export async function handleJob(job: Job, deps: Pick<LoopDeps, "app" | "provider" | "log" | "signal">): Promise<{ stop: string | null }> {
+export async function handleJob(job: Job, deps: Pick<LoopDeps, "app" | "provider" | "log" | "signal">): Promise<{ stop: string | null; temporary?: boolean }> {
   const { app, provider, log, signal } = deps;
   const label = `${job.task}${job.role ? `:${job.role}` : ""}`;
   log(`작업 시작: ${label}`);
@@ -78,7 +81,7 @@ export async function handleJob(job: Job, deps: Pick<LoopDeps, "app" | "provider
       log,
       signal,
     ).catch(() => null);
-    return { stop: STOP_CODES.has(pe.code) ? pe.code : null };
+    return { stop: STOP_CODES.has(pe.code) ? pe.code : null, temporary: pe.code === "AI_TEMPORARY" };
   }
 }
 
@@ -88,6 +91,7 @@ export async function runLoop(deps: LoopDeps): Promise<void> {
   const beatEvery = deps.heartbeatMs ?? 30_000;
   let lastBeat = 0;
   let stopped: string | null = null;
+  let tempFailures = 0;
   let lastNote = "";
   const say = (line: string) => {
     if (line !== lastNote) log(line);
@@ -115,13 +119,37 @@ export async function runLoop(deps: LoopDeps): Promise<void> {
         await sleep(60_000, signal);
         continue;
       }
+      if (deps.canRun && !deps.canRun()) {
+        // 로그인이 풀린 상태에서 작업을 가져가 연달아 실패시키지 않는다.
+        say("ChatGPT 로그인이 필요합니다. npm run runner -- login 을 실행해 주세요. 로그인되면 자동으로 이어서 진행합니다.");
+        await sleep(15_000, signal);
+        continue;
+      }
       const claim = await app.claim();
       if (claim.status === "claimed") {
         lastNote = "";
         deps.countRun?.();
-        const r = await handleJob(claim.job, deps);
+        // AI 호출이 길어져도 화면에 '실행기 꺼짐'으로 보이지 않게 작업 중에도 상태를 보고한다.
+        const beat = setInterval(() => {
+          Promise.resolve(deps.status())
+            .then((s) => app.heartbeat({ ...s, message: null }))
+            .catch(() => undefined);
+        }, beatEvery);
+        let r: { stop: string | null; temporary?: boolean };
+        try {
+          r = await handleJob(claim.job, deps);
+        } finally {
+          clearInterval(beat);
+        }
         if (r.stop) stopped = r.stop;
         lastBeat = 0; // 결과 직후 상태를 바로 보고한다
+        if (r.temporary) {
+          // 일시 장애가 이어질 때 대기 중인 작업을 연달아 실패시키지 않도록, 실패할수록 더 오래 쉰다.
+          tempFailures += 1;
+          const wait = Math.min(30_000 * tempFailures, 5 * 60_000);
+          log(`일시 오류가 ${tempFailures}회 이어졌습니다. ${Math.round(wait / 1000)}초 뒤에 다음 작업을 가져옵니다.`);
+          await sleep(deps.tempBackoffMs ?? wait, signal);
+        } else tempFailures = 0;
         continue;
       }
       if (claim.status === "paused") say(`서버가 AI 요청을 일시정지했습니다: ${claim.reason}`);

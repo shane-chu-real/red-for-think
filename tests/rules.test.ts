@@ -205,15 +205,42 @@ describe("대기열·실행기", () => {
     expect((await claimRun(h.db, h.runnerId)).status).toBe("paused");
   });
 
-  it("호출 상한에 닿으면 작업을 넘기지 않는다", async () => {
+  it("프로젝트 호출 상한에 닿으면 그 작업을 실패로 표시하고, 다른 프로젝트의 대기열은 막지 않는다", async () => {
     const h = await makeHarness();
-    process.env.AI_CAP_PER_PROJECT = "2";
+    process.env.AI_CAP_PER_PROJECT = "1";
     try {
-      await h.toReview().catch(() => undefined);
-      const r = await claimRun(h.db, h.runnerId);
-      expect(r.status).toBe("cap_reached");
+      const a = await h.create({ type: "ai_task", idea: "프로젝트 A", audience: "executive" });
+      await h.drain(); // A의 인터뷰 질문 1회 → 상한 도달
+      await h.ok(a, "ANSWER_INTAKE", { text: "답변" }); // A에 새 작업이 대기열에 들어감
+      const b = await h.create({ type: "ai_task", idea: "프로젝트 B", audience: "executive" }); // 더 늦게 들어온 B
+
+      const claim = await claimRun(h.db, h.runnerId);
+      // A의 작업 때문에 B가 막히지 않는다
+      expect(claim.status).toBe("claimed");
+      if (claim.status === "claimed") expect(claim.job.project_id).toBe(b);
+      // A의 대기 작업은 이유와 함께 실패로 표시되어 화면에서 정리할 수 있다
+      const sa = await h.state(a);
+      expect(sa.pending_runs.map((r) => [r.status, r.error_code])).toEqual([["failed", "CAP_REACHED"]]);
+      expect((await h.runs(a)).at(-1)).toMatchObject({ status: "failed", error_code: "CAP_REACHED" });
+      // 사용자는 멈추지 않고 다음 동작을 할 수 있다(AI_BUSY가 아니다)
+      const next = await h.act(a, "REQUEST_OUTLINE");
+      expect(next.ok).toBe(true);
     } finally {
       delete process.env.AI_CAP_PER_PROJECT;
+    }
+  });
+
+  it("하루 호출 상한에 닿으면 작업을 넘기지 않고 대기 상태로 둔다", async () => {
+    const h = await makeHarness();
+    process.env.AI_CAP_PER_DAY = "1";
+    try {
+      const a = await h.create({ type: "ai_task", idea: "프로젝트 A", audience: "executive" });
+      await h.drain();
+      await h.ok(a, "ANSWER_INTAKE", { text: "답변" });
+      expect((await claimRun(h.db, h.runnerId)).status).toBe("cap_reached");
+      expect((await h.state(a)).pending_runs.map((r) => r.status)).toEqual(["queued"]); // 내일 이어서 진행
+    } finally {
+      delete process.env.AI_CAP_PER_DAY;
     }
   });
 

@@ -7,18 +7,20 @@ import {
   PLAN_DOC_TITLES,
   ROLE_LABELS,
   SECTION_KEYS,
+  SEVERITY_LABELS,
   SEVERITY_RANK,
   type IssueState,
   type Task,
 } from "./constants";
 import { buildDebateLog, validateOutputs } from "./outputs";
-import { buildPlanFromOutline, targetsChangedSince } from "./plan";
+import { buildPlanFromOutline, hasChanges, targetsChangedSince } from "./plan";
 import type { RunPayload } from "./prompts";
 import {
   afterReviews,
   createIssueFromCandidate,
   enqueue,
   judgeTargets,
+  pruneStaleRuns,
   roundSummaryText,
   type ReducerContext,
 } from "./reducer";
@@ -29,6 +31,7 @@ import {
   currentRound,
   findIssue,
   findingLimit,
+  isUnresolved,
   note,
   pad,
   requireIssue,
@@ -156,6 +159,7 @@ export function validateRunOutput<T extends Task>(task: T, text: string, payload
       });
       subset(errors, "반영 쟁점", v.addressed_issue_ids, issues);
       subset(errors, "미반영 쟁점", v.unaddressed.map((u) => u.issue_id), issues);
+      if (v.addressed_issue_ids.length && !hasChanges(v)) errors.push("반영했다고 한 쟁점이 있는데 실제로 바뀌는 내용이 없습니다. 변경 내용을 넣거나 unaddressed로 옮기십시오.");
       break;
     }
     case "judge": {
@@ -170,6 +174,7 @@ export function validateRunOutput<T extends Task>(task: T, text: string, payload
         judged.add(j.issue_id);
         const conds = a.condition_ids[j.issue_id] ?? [];
         const got = new Set(j.condition_results.map((r) => r.condition_id));
+        if (got.size !== j.condition_results.length) errors.push(`${j.issue_id}: 같은 조건을 두 번 판정했습니다.`);
         for (const c of conds) if (!got.has(c)) errors.push(`${j.issue_id}: 조건 ${c} 판정이 빠졌습니다.`);
         for (const c of got) if (!conds.includes(c)) errors.push(`${j.issue_id}: 없는 조건 ${c}`);
         const refOk = new Set([...claims, ...facts, ...sources, ...issues]);
@@ -328,6 +333,18 @@ export function applyRunSuccess(prev: ProjectState, run_id: string, task: Task, 
       const target = new Map<string, Issue>();
       const plan = state.plan.current!.content;
       let merged = 0;
+      // 병합된 지적이 더 심각하면 대표 쟁점의 심각도를 올린다(치명 지적이 병합으로 집계에서 빠지지 않게).
+      const escalate = (rep: Issue, c: Candidate) => {
+        if (SEVERITY_RANK[c.severity] >= SEVERITY_RANK[rep.severity]) return;
+        rep.history.push({
+          at: ctx.now,
+          from: rep.state,
+          to: rep.state,
+          reason: `병합된 ${ROLE_LABELS[c.role]} 지적의 심각도 반영: ${SEVERITY_LABELS[rep.severity]} → ${SEVERITY_LABELS[c.severity]}`,
+          actor: "system",
+        });
+        rep.severity = c.severity;
+      };
       for (const key of order) {
         if (memberOf.has(key)) continue;
         const c = byKey.get(key)!;
@@ -335,15 +352,18 @@ export function applyRunSuccess(prev: ProjectState, run_id: string, task: Task, 
         if (link) {
           const existing = requireIssue(state, link.issue_id);
           const rep = existing.state === "MERGED" && existing.representative_id ? state.issues.find((i) => i.issue_id === existing.representative_id) ?? existing : existing;
-          if (link.relation === "reopen" && (rep.state === "RESOLVED" || rep.state === "WITHDRAWN")) {
-            if (targetsChangedSince(plan, rep.target_claim_ids, rep.resolved_on_version ?? 0)) {
-              setIssueState(rep, "RECHECK_PENDING", `전제 변경으로 재개: ${c.reopen_reason || link.reason}`, c.role, ctx);
-              note(state, ctx, "moderator", `${rep.display_id}을(를) 전제 변경으로 다시 엽니다: ${c.reopen_reason || link.reason}`);
-            } else {
-              note(state, ctx, "system", `${rep.display_id} 재개 제안은 대상 항목이 바뀌지 않아 받아들이지 않았습니다(같은 이유로 반복하지 않음).`, "note");
-            }
+          if (link.relation === "reopen" && (rep.state === "RESOLVED" || rep.state === "WITHDRAWN") && targetsChangedSince(plan, state.plan.removed_claims, rep.target_claim_ids, rep.resolved_on_version ?? 0)) {
+            setIssueState(rep, "RECHECK_PENDING", `전제 변경으로 재개: ${c.reopen_reason || link.reason}`, c.role, ctx);
+            note(state, ctx, "moderator", `${rep.display_id}을(를) 전제 변경으로 다시 엽니다: ${c.reopen_reason || link.reason}`);
+          }
+          if (!isUnresolved(rep)) {
+            // 이미 끝난(해소·철회) 쟁점 뒤에 새 지적을 숨기지 않는다. 새 쟁점으로 등록해 사용자가 직접 판단하게 한다.
+            target.set(key, createIssueFromCandidate(state, c, "OPEN", null, ctx));
+            note(state, ctx, "system", `${rep.display_id}(${ISSUE_STATE_LABELS[rep.state]})와 같은 문제로 분류된 새 지적은 병합하지 않고 새 쟁점으로 등록했습니다. 이미 다룬 내용이면 반박으로 알려 주세요.`, "note");
+            continue;
           }
           createIssueFromCandidate(state, c, "MERGED", rep, ctx);
+          escalate(rep, c);
           target.set(key, rep);
           merged += 1;
           continue;
@@ -355,8 +375,9 @@ export function applyRunSuccess(prev: ProjectState, run_id: string, task: Task, 
         if (!repKey) continue;
         const rep = target.get(repKey);
         const c = byKey.get(key)!;
-        if (rep) {
+        if (rep && isUnresolved(rep)) {
           createIssueFromCandidate(state, c, "MERGED", rep, ctx);
+          escalate(rep, c);
           merged += 1;
         } else {
           target.set(key, createIssueFromCandidate(state, c, "OPEN", null, ctx));
@@ -438,7 +459,14 @@ export function applyRunSuccess(prev: ProjectState, run_id: string, task: Task, 
             serverNote = "보류 중인 쟁점은 근거가 추가되기 전까지 해소로 처리하지 않습니다.";
           } else applied = "RESOLVED";
         } else if (j.proposed_state === "WITHDRAWN") {
-          applied = "WITHDRAWN";
+          // 철회는 사용자의 반박이 있었거나 대상 항목이 실제로 바뀐 경우에만 받는다. AI 제안만으로 쟁점이 사라지지 않게 한다.
+          const rebutted = prevState === "REBUTTAL_PENDING" || Boolean(issue.rebuttal);
+          const premiseChanged = targetsChangedSince(plan.content, state.plan.removed_claims, issue.target_claim_ids, issue.raised_on_version);
+          if (rebutted || premiseChanged) applied = "WITHDRAWN";
+          else {
+            applied = "OPEN";
+            serverNote = "사용자의 반박이나 대상 항목의 변경 없이 지적을 철회할 수 없어 미해결로 둡니다.";
+          }
         } else if (j.follow_up_question && prevState === "REBUTTAL_PENDING" && issue.follow_ups_used < LIMITS.maxFollowUps) {
           applied = "REBUTTAL_PENDING";
           issue.follow_up = { question: j.follow_up_question, asked_at: ctx.now, answer: null };
@@ -556,6 +584,7 @@ export function applyRunSuccess(prev: ProjectState, run_id: string, task: Task, 
       break;
     }
   }
+  pruneStaleRuns(state, effects);
   return { state, effects };
 }
 

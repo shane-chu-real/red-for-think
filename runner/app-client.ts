@@ -53,7 +53,8 @@ export function decodeConnectionString(text: string): { url: string; bypass: str
 async function post(url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
   let res: Response;
   try {
-    res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body ?? {}) });
+    // 리다이렉트를 따라가지 않는다(우회 값·실행기 토큰·AI 결과가 다른 호스트로 넘어가지 않게).
+    res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body ?? {}), redirect: "error" });
   } catch (e) {
     throw new AppError("NETWORK", `웹앱에 연결하지 못했습니다: ${e instanceof Error ? e.message : e}`);
   }

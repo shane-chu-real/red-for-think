@@ -221,7 +221,7 @@ export interface RevisionProposal {
 export interface ChangeRequest {
   request_id: string;
   text: string;
-  status: "pending" | "consumed";
+  status: "pending" | "consumed" | "dropped"; // dropped: 변경안을 적용하지 않기로 해 함께 종료됨
   created_at: string;
 }
 
@@ -402,7 +402,8 @@ export interface ProjectState {
   intake: { batches: number; questions: IntakeQuestion[]; info_items: InfoItem[] };
   sources: SourceMeta[];
   outline_draft: { draft_id: string; run_id: string; content: PlanContent; created_at: string } | null;
-  plan: { current: PlanVersionState | null; history: Omit<PlanVersionState, "content">[] };
+  // removed_claims: 삭제된 항목 ID → 삭제된 기획 버전 번호 (전제 변경 판정용)
+  plan: { current: PlanVersionState | null; history: Omit<PlanVersionState, "content">[]; removed_claims?: Record<string, number> };
   issues: Issue[];
   decisions: Decision[];
   judgments: Judgment[];

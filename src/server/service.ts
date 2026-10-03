@@ -175,8 +175,12 @@ export async function dispatch(db: Db, req: ActionRequest): Promise<Envelope> {
       }
 
       if (!req.project_id) return fail("INVALID_INPUT", "project_id가 필요합니다.");
+      if (!/^[0-9a-f-]{36}$/i.test(req.project_id)) return fail("NOT_FOUND", "프로젝트를 찾을 수 없습니다.");
       const row = (await q.query("select state, state_version from projects where project_id = $1 for update", [req.project_id])).rows[0];
       if (!row) return fail("NOT_FOUND", "프로젝트를 찾을 수 없습니다.");
+      // 잠금을 기다리는 사이 같은 요청이 먼저 반영되었을 수 있다. 잠금을 얻은 뒤 한 번 더 확인한다.
+      const late = (await q.query("select after_version, result from events where request_key = $1", [req.request_key])).rows[0];
+      if (late) return { ok: true, state_version: row.state_version, data: late.result, duplicate: true };
       // 2) 화면이 본 버전과 현재 버전이 다르면 갱신을 요청한다.
       if (req.expected_state_version !== row.state_version) {
         return { ...fail("VERSION_CONFLICT", "다른 변경이 먼저 반영되었습니다. 화면을 새로 불러온 뒤 다시 시도해 주세요.", true), state_version: row.state_version };

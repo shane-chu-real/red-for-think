@@ -84,7 +84,7 @@ describe("인증", () => {
     expect(auth.seen.authorize[1].client_id).toBe(auth.ISSUED);
     expect(auth.seen.authorize[1].agent_name_hint).toBeUndefined();
     expect(auth.seen.authorize[1].ext_agent_host_id).toBe(auth.seen.authorize[0].ext_agent_host_id);
-    expect(auth.seen.authorize[1].id_token_hint).toBeTruthy();
+    expect(auth.seen.authorize[1].id_token_hint).toBeUndefined(); // 승인 주소에 토큰을 싣지 않는다
     expect(second.ext_agent_host_id).toBe(first.ext_agent_host_id);
     expect(hostId()).toBe(first.ext_agent_host_id); // 재시작해도 유지되는 값
     expect(auth.seen.authorize[0].state).not.toBe(auth.seen.authorize[1].state); // 시도마다 새 state·nonce
@@ -233,6 +233,63 @@ describe("추론", () => {
     // 다음 요청부터는 거절된 필드를 보내지 않는다
     await p.generate({ payload, model_slug: null });
     expect(ai.state.bodies[2].text).toBeUndefined();
+  });
+
+  it("요청이 받아들여진 뒤에는 어떤 이유로도 자동으로 다시 보내지 않는다", async () => {
+    ai.state.scenario = "close_before_event";
+    await expect(provider().generate({ payload, model_slug: null })).rejects.toMatchObject({ code: "AI_INCOMPLETE" });
+    expect(ai.state.calls).toBe(1);
+
+    Object.assign(ai.state, { scenario: "failed_unsupported_after_delta", calls: 0 });
+    const p = provider();
+    const err = await p.generate({ payload, model_slug: null }).catch((e) => e);
+    expect(err.code).toBe("UNSUPPORTED_CAPABILITY");
+    expect(err.detail.streamStarted).toBe(true);
+    expect(ai.state.calls).toBe(1);
+    expect(p.structured).toBe("unknown"); // 스트림 도중 오류로 구조화 출력을 '미지원'으로 단정하지 않는다
+  });
+
+  it("원인 표시가 없는 미지원 오류: 구조화 출력 없이 한 번만 확인하고, 그것이 원인이 아니면 처음 오류를 보고한다", async () => {
+    ai.state.scenario = "reject_unattributed";
+    const p = provider();
+    const r = await p.generate({ payload, model_slug: null });
+    expect(r.output_mode).toBe("text_json");
+    expect(p.structured).toBe("unsupported");
+    expect(ai.state.calls).toBe(2);
+
+    Object.assign(ai.state, { scenario: "reject_always", calls: 0 });
+    const p2 = provider();
+    await expect(p2.generate({ payload, model_slug: null })).rejects.toMatchObject({ code: "UNSUPPORTED_CAPABILITY" });
+    expect(ai.state.calls).toBe(2);
+    expect(p2.structured).toBe("unknown");
+  });
+
+  it("토큰을 얻지 못하면 원인을 구분한다: 재로그인 필요는 멈춤, 일시 오류는 제한적 재시도", async () => {
+    const reauth = provider({
+      getAccessToken: async () => {
+        throw Object.assign(new Error("expired"), { code: "REAUTH_REQUIRED" });
+      },
+    });
+    await expect(reauth.generate({ payload, model_slug: null })).rejects.toMatchObject({ code: "REAUTH_REQUIRED" });
+    expect(ai.state.calls).toBe(0);
+
+    let n = 0;
+    const flaky = provider({
+      getAccessToken: async () => {
+        if (n++ < 2) throw Object.assign(new Error("network"), { code: "REFRESH_TEMPORARY" });
+        return "oauth-access-token";
+      },
+    });
+    const r = await flaky.generate({ payload, model_slug: null }); // 두 번 실패한 뒤 세 번째에 성공
+    expect(r.terminal_event).toBe("response.completed");
+    expect(ai.state.calls).toBe(1); // AI 요청 자체는 한 번만 나갔다
+
+    const down = provider({
+      getAccessToken: async () => {
+        throw Object.assign(new Error("network"), { code: "REFRESH_TEMPORARY" });
+      },
+    });
+    await expect(down.generate({ payload, model_slug: null })).rejects.toMatchObject({ code: "AI_TEMPORARY" });
   });
 
   it("한도·자격 오류는 원인별로 구분하고, 일시 오류만 제한적으로 다시 시도한다", async () => {

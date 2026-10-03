@@ -212,7 +212,22 @@ export const TASK_LABELS: Record<Task, string> = {
   qa: "예상 질의응답",
 };
 
-export const END_REASONS = ["REVIEW_FINISHED", "PENDING_EXTERNAL_CHECK", "ROUND_LIMIT", "USER_FINISHED"] as const;
+// 작업이 유효한 단계. 단계가 넘어가면 남은 작업(실패 포함)은 정리하고, 다른 단계에서는 재시도·반영하지 않는다.
+export const TASK_PHASES: Record<Task, Phase[]> = {
+  intake: ["INTAKE"],
+  outline: ["OUTLINE_CONFIRM"],
+  review: ["REVIEWING"],
+  consolidate: ["REVIEWING"],
+  map_reply: ["WAITING_REPLY"],
+  revise: ["REVISION_CONFIRM"],
+  judge: ["VERIFYING"],
+  assess: ["GENERATING"],
+  plan_doc: ["GENERATING"],
+  storyline: ["GENERATING"],
+  qa: ["GENERATING"],
+};
+
+export const END_REASONS =["REVIEW_FINISHED", "PENDING_EXTERNAL_CHECK", "ROUND_LIMIT", "USER_FINISHED"] as const;
 export type EndReason = (typeof END_REASONS)[number];
 export const END_REASON_LABELS: Record<EndReason, string> = {
   REVIEW_FINISHED: "검토 완료",

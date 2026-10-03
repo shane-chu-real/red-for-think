@@ -56,7 +56,9 @@ export function SettingsView() {
             AI 호출은 이 웹앱이 아니라 내 PC의 실행기가 ChatGPT 플랜으로 수행합니다. ChatGPT 토큰은 PC 밖으로 나가지 않으며, 이 화면에도 저장되지 않습니다.
           </p>
           <ol className="ml-5 mt-2 list-decimal space-y-1 text-sm text-slate-700">
-            <li>아래 버튼으로 연결 문자열을 발급합니다(10분 동안 1회만 유효, 한 번만 표시).</li>
+            <li>
+              아래 버튼으로 연결 문자열을 발급합니다. 안에 든 연결 코드는 10분 동안 1회만 유효하지만, 배포 보호를 통과하는 값도 함께 들어 있습니다. 채팅·문서·메신저에 남기지 마세요.
+            </li>
             <li>
               PC의 프로젝트 폴더에서 <code className="rounded bg-slate-100 px-1">npm run runner -- pair</code> 를 실행하고, 물어볼 때 연결 문자열을 붙여넣습니다. 채팅이나 문서에는 붙이지 마세요.
             </li>
@@ -76,6 +78,9 @@ export function SettingsView() {
                 지금만 표시됩니다 · {kst(pairing.expires_at)}까지 유효{pairing.bypass_included ? " · Vercel 보호 우회 값 포함" : " · 로컬 개발용(보호 우회 값 없음)"}
               </p>
               <textarea className={`${inputClass} font-mono text-xs`} rows={4} readOnly value={pairing.connection_string} aria-label="실행기 연결 문자열" onFocus={(e) => e.currentTarget.select()} />
+              <p className="text-xs text-amber-900">
+                이 문자열이 새어 나갔다고 생각되면 Vercel 프로젝트 설정(Deployment Protection → Protection Bypass for Automation)에서 값을 교체하고 다시 배포한 뒤, 아래에서 실행기를 해제하고 새로 연결하세요. 우회 값만으로는 프로젝트를 읽거나 바꿀 수 없고 실행기 전용 경로만 통과합니다.
+              </p>
               <div className="flex gap-2">
                 <Button
                   variant="secondary"

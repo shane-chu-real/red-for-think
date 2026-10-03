@@ -1,5 +1,5 @@
 // AI 작업 대기열: 실행기가 가져가고(claim) 결과를 제출한다(complete/fail). AI 호출 자체는 서버가 하지 않는다.
-import type { Task } from "@/core/constants";
+import { TASK_PHASES, type Task } from "@/core/constants";
 import type { RunPayload } from "@/core/prompts";
 import { applyRunCorrection, applyRunFailure, applyRunSuccess, validateRunOutput } from "@/core/results";
 import type { ProjectState } from "@/core/types";
@@ -85,60 +85,82 @@ export type ClaimResult =
       };
     };
 
+// 아직 가져가지 않은 대기 작업을 실패로 표시한다(프로젝트 상한 도달 등). 화면에서 이유를 보고 정리·재시도할 수 있다.
+async function failQueued(db: Db, runId: string, code: string, message: string) {
+  await db.tx(async (q) => {
+    const locked = await lockProjectAndRun(q, runId);
+    if (!locked || locked.run.status !== "queued") return;
+    await markFailed(q, locked.proj, locked.run, code, message, null);
+  });
+}
+
 export async function claimRun(db: Db, runnerId: string): Promise<ClaimResult> {
   await expireLeases(db);
   const paused = await getSetting<{ paused: boolean; reason: string }>(db, "ai_paused");
   if (paused?.paused) return { status: "paused", reason: paused.reason };
+  const limit = caps();
+  const projectCapMessage = `이 프로젝트의 AI 호출 상한(${limit.perProject}회)에 도달했습니다. 상한(AI_CAP_PER_PROJECT)을 올린 뒤 다시 시도해 주세요.`;
+  let hitProjectCap = false;
 
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 30; i++) {
+    const capped: string[] = [];
     const out = await db.tx(async (q): Promise<ClaimResult | "again"> => {
-      const run = (await q.query("select * from ai_runs where status = 'queued' order by created_at limit 1 for update skip locked")).rows[0];
-      if (!run) return { status: "idle" };
-      const proj = (await q.query("select state from projects where project_id = $1", [run.project_id])).rows[0];
-      const state = proj?.state as ProjectState | undefined;
-      const pending = state?.pending_runs.find((r) => r.run_id === run.run_id && r.status === "queued");
-      const planMoved = run.plan_version_id && run.plan_version_id !== state?.plan.current?.plan_version_id;
-      if (!state || !pending || planMoved) {
-        // 기준 기획이 이미 바뀐 작업은 AI를 호출하지 않고 넘긴다.
-        await q.query("update ai_runs set status = 'superseded', finished_at = now(), error_code = 'SUPERSEDED' where run_id = $1", [run.run_id]);
-        return "again";
+      if ((await counter(q, `day:${kstDay()}`)) >= limit.perDay) {
+        return { status: "cap_reached", message: `오늘 AI 호출 상한(${limit.perDay}회)에 도달했습니다. 대기 중인 작업은 내일 이어서 진행됩니다.` };
       }
-      const limit = caps();
-      const day = `day:${kstDay()}`;
-      const proj_scope = `project:${run.project_id}`;
-      if ((await counter(q, day)) >= limit.perDay) return { status: "cap_reached", message: `오늘 AI 호출 상한(${limit.perDay}회)에 도달했습니다.` };
-      if ((await counter(q, proj_scope)) >= limit.perProject) {
-        return { status: "cap_reached", message: `이 프로젝트의 AI 호출 상한(${limit.perProject}회)에 도달했습니다.` };
+      // 오래된 순서로 보되, 상한에 닿은 프로젝트의 작업은 건너뛴다(한 프로젝트가 다른 프로젝트의 대기열을 막지 않게).
+      const candidates = (await q.query("select run_id, project_id from ai_runs where status = 'queued' order by created_at limit 50")).rows;
+      const cappedProjects = new Set<string>();
+      for (const c of candidates) {
+        if (!cappedProjects.has(c.project_id) && (await counter(q, `project:${c.project_id}`)) >= limit.perProject) cappedProjects.add(c.project_id);
+        if (cappedProjects.has(c.project_id)) {
+          capped.push(c.run_id);
+          continue;
+        }
+        const run = (await q.query("select * from ai_runs where run_id = $1 and status = 'queued' for update skip locked", [c.run_id])).rows[0];
+        if (!run) continue;
+        const proj = (await q.query("select state from projects where project_id = $1", [run.project_id])).rows[0];
+        const state = proj?.state as ProjectState | undefined;
+        const pending = state?.pending_runs.find((r) => r.run_id === run.run_id && r.status === "queued");
+        const planMoved = run.plan_version_id && run.plan_version_id !== state?.plan.current?.plan_version_id;
+        if (!state || !pending || planMoved || !TASK_PHASES[run.task as Task].includes(state.phase)) {
+          // 기준 기획이나 단계가 이미 바뀐 작업은 AI를 호출하지 않고 넘긴다.
+          await q.query("update ai_runs set status = 'superseded', finished_at = now(), error_code = 'SUPERSEDED' where run_id = $1", [run.run_id]);
+          return "again";
+        }
+        await bump(q, `day:${kstDay()}`);
+        await bump(q, `project:${run.project_id}`);
+        const attempts = run.attempts + 1;
+        const requestKey = `run:${run.run_id}:${attempts}`;
+        const upd = (
+          await q.query(
+            `update ai_runs set status = 'claimed', attempts = $2, request_key = $3, runner_id = $4, claimed_at = now(),
+             lease_expires_at = now() + interval '${LEASE_MINUTES} minutes' where run_id = $1 returning lease_expires_at`,
+            [run.run_id, attempts, requestKey, runnerId],
+          )
+        ).rows[0];
+        const model = await getSetting<string>(q, "model_slug");
+        return {
+          status: "claimed",
+          job: {
+            run_id: run.run_id,
+            request_key: requestKey,
+            project_id: run.project_id,
+            task: run.task,
+            role: run.role,
+            model_slug: model ?? null,
+            lease_expires_at: iso(upd.lease_expires_at),
+            payload: run.payload as RunPayload,
+          },
+        };
       }
-      await bump(q, day);
-      await bump(q, proj_scope);
-      const attempts = run.attempts + 1;
-      const requestKey = `run:${run.run_id}:${attempts}`;
-      const upd = (
-        await q.query(
-          `update ai_runs set status = 'claimed', attempts = $2, request_key = $3, runner_id = $4, claimed_at = now(),
-           lease_expires_at = now() + interval '${LEASE_MINUTES} minutes' where run_id = $1 returning lease_expires_at`,
-          [run.run_id, attempts, requestKey, runnerId],
-        )
-      ).rows[0];
-      const model = await getSetting<string>(q, "model_slug");
-      return {
-        status: "claimed",
-        job: {
-          run_id: run.run_id,
-          request_key: requestKey,
-          project_id: run.project_id,
-          task: run.task,
-          role: run.role,
-          model_slug: model ?? null,
-          lease_expires_at: iso(upd.lease_expires_at),
-          payload: run.payload as RunPayload,
-        },
-      };
+      return capped.length ? "again" : { status: "idle" };
     });
-    if (out !== "again") return out;
+    for (const runId of capped) await failQueued(db, runId, "CAP_REACHED", projectCapMessage);
+    if (capped.length) hitProjectCap = true;
+    if (out !== "again") return out.status === "idle" && hitProjectCap ? { status: "cap_reached", message: projectCapMessage } : out;
   }
-  return { status: "idle" };
+  return hitProjectCap ? { status: "cap_reached", message: projectCapMessage } : { status: "idle" };
 }
 
 export interface CompleteBody {
@@ -179,7 +201,7 @@ export async function completeRun(db: Db, runnerId: string, runId: string, body:
     const meta = [body.text, body.output_mode, body.model_slug ?? null, body.provider_request_id ?? null, body.usage ? JSON.stringify(body.usage) : null, ctx.now];
     const pending = state.pending_runs.find((r) => r.run_id === run.run_id);
     const planMoved = run.plan_version_id && run.plan_version_id !== state.plan.current?.plan_version_id;
-    if (!pending || planMoved) {
+    if (!pending || planMoved || !TASK_PHASES[run.task as Task].includes(state.phase)) {
       // 그사이 기획이 바뀌었다: 결과는 보존하되 현재 상태에 적용하지 않는다.
       await q.query(
         "update ai_runs set status = 'superseded', result_text = $2, output_mode = $3, model_slug = $4, provider_request_id = $5, usage = $6, finished_at = $7, error_code = 'SUPERSEDED' where run_id = $1",
