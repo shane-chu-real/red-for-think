@@ -12,3 +12,5 @@ npm-debug.log*
 .env*
 .env*.local
 !.env.example
+.agents/
+skills-lock.json
