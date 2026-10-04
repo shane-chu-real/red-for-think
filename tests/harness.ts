@@ -11,9 +11,10 @@ import { dispatch, getProject, type Envelope } from "@/server/service";
 
 export type Override = (payload: RunPayload) => unknown | "FAIL";
 
-export async function makeHarness() {
-  const db: Db = await createPgliteDb();
-  await migrate(db);
+// existing을 주면 그 DB(이미 스키마가 적용된 것)를 쓰고, 없으면 메모리 PGlite를 새로 만든다.
+export async function makeHarness(existing?: Db) {
+  const db: Db = existing ?? (await createPgliteDb());
+  if (!existing) await migrate(db);
   const pairing = await createPairing(db, "http://localhost:3000");
   const info = JSON.parse(Buffer.from(pairing.connection_string.slice(5), "base64url").toString("utf8"));
   const paired = await pairRunner(db, { code: info.code, label: "test-runner" });

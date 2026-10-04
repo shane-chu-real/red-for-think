@@ -10,18 +10,36 @@ export interface Db extends Queryable {
   kind: "postgres" | "pglite";
 }
 
-async function createPgDb(connectionString: string): Promise<Db> {
+// searchPath: 시험용 임시 스키마에서 돌릴 때만 쓴다(직접 연결 전용 — 세션 설정이 연결마다 유지되어야 한다).
+export async function createPgDb(connectionString: string, opts: { searchPath?: string; max?: number } = {}): Promise<Db & { close: () => Promise<void> }> {
   const pg = (await import("pg")).default;
-  const pool = new pg.Pool({ connectionString, max: 5, idleTimeoutMillis: 10_000 });
+  const pool = new pg.Pool({ connectionString, max: opts.max ?? 5, idleTimeoutMillis: 10_000 });
+  if (opts.searchPath && !/^[a-z_][a-z0-9_]*$/.test(opts.searchPath)) throw new Error("잘못된 스키마 이름입니다.");
   if (process.env.VERCEL) {
     const { attachDatabasePool } = await import("@vercel/functions");
     attachDatabasePool(pool);
   }
+  // 임시 스키마를 쓸 때는 연결을 꺼낼 때마다 search_path를 맞춘 뒤 쓴다.
+  const acquire = async () => {
+    const client = await pool.connect();
+    if (opts.searchPath) await client.query(`set search_path to ${opts.searchPath}`);
+    return client;
+  };
   return {
+    close: () => pool.end(),
     kind: "postgres",
-    query: (sql, params) => pool.query(sql, params as any[]) as any,
+    query: opts.searchPath
+      ? async (sql, params) => {
+          const client = await acquire();
+          try {
+            return (await client.query(sql, params as any[])) as any;
+          } finally {
+            client.release();
+          }
+        }
+      : (sql, params) => pool.query(sql, params as any[]) as any,
     async tx(fn) {
-      const client = await pool.connect();
+      const client = await acquire();
       try {
         await client.query("BEGIN");
         const result = await fn({ query: (sql, params) => client.query(sql, params as any[]) as any });
