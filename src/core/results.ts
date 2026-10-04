@@ -159,7 +159,13 @@ export function validateRunOutput<T extends Task>(task: T, text: string, payload
       });
       subset(errors, "반영 쟁점", v.addressed_issue_ids, issues);
       subset(errors, "미반영 쟁점", v.unaddressed.map((u) => u.issue_id), issues);
-      if (v.addressed_issue_ids.length && !hasChanges(v)) errors.push("반영했다고 한 쟁점이 있는데 실제로 바뀌는 내용이 없습니다. 변경 내용을 넣거나 unaddressed로 옮기십시오.");
+      if (v.addressed_issue_ids.length && !hasChanges(v)) {
+        errors.push("반영했다고 한 쟁점이 있는데 본문 항목이 바뀌지 않았습니다. changes에 관련 claim의 수정·추가·삭제를 넣거나, 반영하지 못한 쟁점은 unaddressed로 옮기십시오. 핵심 메시지·요청 결정·숫자 추가·연쇄 영향 설명만으로는 반영이 아닙니다.");
+      }
+      // 머리말(핵심 메시지·요청 결정)만 바뀌고 본문이 그대로면 기획이 서로 어긋난다.
+      const cur = state.plan.current?.content;
+      const headChanged = (v.core_message && v.core_message !== cur?.core_message) || (v.requested_decision && v.requested_decision !== cur?.requested_decision);
+      if (headChanged && !v.changes.length) errors.push("핵심 메시지나 요청 결정을 바꾸면 본문의 관련 claim도 changes로 함께 고쳐야 합니다(예: 요청 결정을 바꾸면 decision 섹션).");
       break;
     }
     case "judge": {
@@ -254,6 +260,8 @@ export function applyRunSuccess(prev: ProjectState, run_id: string, task: Task, 
         state.counters.question += 1;
         state.intake.questions.push({ question_id: `Q-${pad(state.counters.question, 2)}`, text: q.text, why: q.why, batch, answer: null });
       }
+      // 진행자는 매번 확인된 정보를 전부 다시 정리해 주므로, 이전 정리본은 새 것으로 바꾼다(사용자가 쓴 원문은 남긴다).
+      if (v.info_items.length) state.intake.info_items = state.intake.info_items.filter((i) => i.origin !== "ai");
       for (const item of v.info_items) {
         state.counters.item += 1;
         state.intake.info_items.push({ item_id: `N-${pad(state.counters.item)}`, kind: item.kind, text: item.text, origin: "ai" });

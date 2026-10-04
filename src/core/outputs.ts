@@ -3,6 +3,7 @@ import {
   AUDIENCE_LABELS,
   DECISION_TYPE_LABELS,
   END_REASON_LABELS,
+  INFO_KIND_LABELS,
   ISSUE_STATE_LABELS,
   OUTCOME_LABELS,
   ROLE_LABELS,
@@ -12,6 +13,7 @@ import { unresolvedCritical } from "./state";
 import type {
   DebateLogContent,
   DecisionStatus,
+  Fact,
   OutputRecord,
   PlanContent,
   PlanDocContent,
@@ -159,6 +161,14 @@ export function scopeNotes(ds: DecisionStatus): string[] {
 
 const esc = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
+// 산출물에 나오는 F·SRC 번호의 풀이(스냅샷 시점의 사실 목록과 자료 제목)
+export interface OutputRefs {
+  facts: Fact[];
+  sources: { source_id: string; title: string }[];
+}
+
+export const factValue = (f: Pick<Fact, "value" | "unit">) => (f.value === "미정" ? f.value : `${f.value}${f.unit}`);
+
 export function renderMarkdown(args: {
   title: string;
   record: OutputRecord;
@@ -167,8 +177,9 @@ export function renderMarkdown(args: {
   storyline: StorylineContent;
   qa: QaContent;
   debate: DebateLogContent;
+  refs: OutputRefs;
 }): string {
-  const { title, record, decisionStatus: ds, planDoc, storyline, qa, debate } = args;
+  const { title, record, decisionStatus: ds, planDoc, storyline, qa, debate, refs } = args;
   const L: string[] = [];
   L.push(`# ${title} — 산출물`);
   L.push("");
@@ -202,6 +213,14 @@ export function renderMarkdown(args: {
   for (const r of debate.rows) {
     const where = r.reflected_in.length ? r.reflected_in.join(", ") : r.not_reflected_reason;
     L.push(`| ${r.display_id} | ${esc(r.issue)} | ${ROLE_LABELS[r.role]} | ${SEVERITY_LABELS[r.severity]} | ${esc(r.user_response)} | ${ISSUE_STATE_LABELS[r.state]}${r.representative ? `→${r.representative}` : ""} | ${esc(r.judgment_basis)} | ${esc(where)} |`);
+  }
+  if (refs.facts.length || refs.sources.length) {
+    L.push("", "## 참조 목록");
+    if (refs.facts.length) {
+      L.push("", "| ID | 항목 | 값 | 구분 | 비고 |", "|---|---|---|---|---|");
+      for (const f of refs.facts) L.push(`| ${f.fact_id} | ${esc(f.label)} | ${esc(factValue(f))} | ${INFO_KIND_LABELS[f.kind]} | ${esc(f.note)} |`);
+    }
+    if (refs.sources.length) L.push("", ...refs.sources.map((s) => `- ${s.source_id}: ${s.title}`));
   }
   L.push("", "## 산출물 검사 결과", "");
   if (!record.validation.errors.length && !record.validation.warnings.length) L.push("- 구조 검사 통과 (내용의 사실 여부를 보증하지 않습니다)");

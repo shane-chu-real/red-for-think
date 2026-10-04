@@ -153,6 +153,17 @@ export function targetsChangedSince(plan: PlanContent, removed: Record<string, n
   });
 }
 
-export function hasChanges(rev: Pick<RevisionProposal, "changes" | "fact_changes" | "core_message" | "requested_decision">): boolean {
-  return rev.changes.length + rev.fact_changes.length > 0 || Boolean(rev.core_message) || Boolean(rev.requested_decision);
+// 본문(주장, 기존 숫자)이 실제로 바뀌는가.
+// 핵심 메시지·요청 결정만 바꾸거나 숫자를 새로 추가만 한 변경안은 본문이 그대로이므로 '반영'으로 보지 않는다.
+export function hasChanges(rev: Pick<RevisionProposal, "changes" | "fact_changes">): boolean {
+  return rev.changes.length > 0 || rev.fact_changes.some((f) => f.op !== "add");
+}
+
+// 기준 버전 이후 실제로 바뀐 항목(판정 근거로 넘긴다 — 변경안의 자기 설명이 아니라 실제 결과).
+export function changedSince(plan: PlanContent, removed: Record<string, number> | undefined, sinceVersion: number) {
+  return {
+    claim_ids: allClaims(plan).filter((c) => c.updated_in_version > sinceVersion).map((c) => c.claim_id),
+    removed_claim_ids: Object.entries(removed ?? {}).filter(([, v]) => v > sinceVersion).map(([id]) => id),
+    fact_ids: plan.facts.filter((f) => f.updated_in_version > sinceVersion).map((f) => f.fact_id),
+  };
 }

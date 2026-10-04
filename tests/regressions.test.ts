@@ -236,6 +236,86 @@ describe("변경안·검토 흐름", () => {
   });
 });
 
+// 실제 ChatGPT 플랜으로 전체 흐름을 돌렸을 때(2026-10-04) 나온 문제의 재발 방지 시험
+describe("실제 AI 시험에서 나온 문제", () => {
+  const pilotFact = { op: "add", fact_id: null, label: "파일럿 규모", value: "30", unit: "명", kind: "user_statement", area: "people", note: "", source_refs: [] };
+
+  it("본문 항목은 그대로 두고 핵심 메시지·요청 결정·숫자 추가만 한 변경안은 '반영'으로 받지 않는다", async () => {
+    const h = await makeHarness();
+    const id = await h.toReply();
+    await h.ok(id, "RESPOND_ISSUES", { responses: [{ issue_id: "I-001", response_type: "accept", text: "" }] });
+    h.override("revise", (p) => ({ ...mock(p), changes: [], core_message: "30명 파일럿 후 확대", requested_decision: "30명 파일럿 승인", fact_changes: [pilotFact] }));
+    await h.ok(id, "PROCEED");
+    await h.drain();
+    const s = await h.state(id);
+    expect(s.revision).toBeNull();
+    expect(s.pending_runs[0]).toMatchObject({ task: "revise", status: "failed", error_code: "AI_SCHEMA_ERROR" });
+    expect(s.issues.find((i) => i.display_id === "I-001")!.state).toBe("CHANGE_PENDING");
+  });
+
+  it("수용한 쟁점이 없어도, 요청 결정만 바꾸고 본문을 그대로 둔 변경안은 받지 않는다", async () => {
+    const h = await makeHarness();
+    const id = await h.toReply();
+    await h.ok(id, "SUBMIT_REPLY", { text: "30명으로 줄여줘" });
+    await h.drain();
+    let s = await h.state(id);
+    await h.ok(id, "CONFIRM_REPLY_MAPPING", { mapping_id: s.pending_mapping!.mapping_id });
+    h.override("revise", (p) => ({ ...mock(p), changes: [], requested_decision: "30명 파일럿 승인" }));
+    await h.ok(id, "PROCEED");
+    await h.drain();
+    s = await h.state(id);
+    expect(s.revision).toBeNull();
+    expect(s.pending_runs[0]).toMatchObject({ task: "revise", status: "failed", error_code: "AI_SCHEMA_ERROR" });
+  });
+
+  it("판정에는 변경안의 자기 설명이 아니라 실제로 바뀐 항목 목록을 넘긴다", async () => {
+    const h = await makeHarness();
+    const id = await h.toReply();
+    await h.ok(id, "RESPOND_ISSUES", { responses: [{ issue_id: "I-001", response_type: "accept", text: "" }] });
+    await h.ok(id, "PROCEED");
+    await h.drain();
+    const s = await h.state(id);
+    const target = s.issues.find((i) => i.display_id === "I-001")!.target_claim_ids[0];
+    let seen: Record<string, unknown> = {};
+    h.override("judge", (p) => {
+      seen = (p.context.issues as Record<string, unknown>[])[0];
+      return mock(p);
+    });
+    await h.ok(id, "CONFIRM_REVISION", { revision_id: s.revision!.revision_id });
+    await h.drain();
+    expect(seen.revision_applied).toBe(true);
+    expect(seen.changed_since_raised).toEqual({ claim_ids: [target], removed_claim_ids: [], fact_ids: [] });
+    expect(seen).not.toHaveProperty("applied_changes");
+    expect(seen.state_label).toBe("재검증 대기");
+  });
+
+  it("인터뷰 2차 정리는 1차 정리를 대체하고, 뼈대 작성에는 마지막 묶음의 미응답 질문만 넘긴다", async () => {
+    const h = await makeHarness();
+    const id = await h.create({ type: "education", idea: "신입 300명 AI 교육", audience: "executive" });
+    await h.drain(); // 1차: 질문 2개 + 정리 1건
+    h.override("intake", () => ({
+      questions: [{ text: "다듬은 질문", why: "이유" }],
+      info_items: [{ kind: "user_statement", text: "정리 A" }, { kind: "unknown", text: "정리 B" }],
+      ready_for_outline: false,
+      type_suggestion: null,
+      note: "",
+    }));
+    await h.ok(id, "ANSWER_INTAKE", { text: "연 300명, 예산은 모름" });
+    await h.drain();
+    const s = await h.state(id);
+    expect(s.intake.questions.length).toBe(3); // 기록은 남는다
+    expect(s.intake.info_items.map((i) => `${i.origin}:${i.text}`)).toEqual(["user:연 300명, 예산은 모름", "ai:정리 A", "ai:정리 B"]);
+    let seen: unknown;
+    h.override("outline", (p) => {
+      seen = p.context.intake_answers;
+      return mock(p);
+    });
+    await h.ok(id, "REQUEST_OUTLINE");
+    await h.drain();
+    expect(seen).toEqual([{ question: "다듬은 질문", answer: "(미응답 — 미확인으로 다룰 것)" }]);
+  });
+});
+
 describe("요청 검사", () => {
   it("프로토타입 키 같은 이름의 동작도 허용 목록 밖이면 입력 오류로 거절한다", async () => {
     const h = await makeHarness();

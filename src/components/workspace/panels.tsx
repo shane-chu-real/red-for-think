@@ -63,7 +63,8 @@ export function AiWork({ view, act, busy }: PanelProps) {
 
 export function IntakePanel({ view, act, busy }: PanelProps) {
   const { state } = view;
-  const open = state.intake.questions.filter((q) => q.answer === null);
+  // 마지막 묶음의 질문만 보여 준다(진행자가 묶음마다 남은 질문을 다시 정리해 준다).
+  const open = state.intake.questions.filter((q) => q.answer === null && q.batch === state.intake.batches);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [idea, setIdea] = useState("");
   const waiting = state.pending_runs.some((r) => r.status === "queued");

@@ -24,6 +24,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string; sna
       storyline: a.storyline as StorylineContent,
       qa: a.qa as QaContent,
       debate: a.debate_log as DebateLogContent,
+      refs: out.refs,
     });
     const filename = encodeURIComponent(`${out.title}-v${out.record.plan_version_no}-${snapshotId.slice(0, 8)}.md`).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
     return new NextResponse(md, {

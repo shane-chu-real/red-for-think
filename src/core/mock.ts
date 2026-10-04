@@ -143,7 +143,7 @@ function revise(c: Ctx) {
 function judge(c: Ctx) {
   return {
     judgments: (c.issues as any[]).map((i) => {
-      const accepted = (i.decisions as any[]).some((d) => d.response_type === "accept") && (i.applied_changes as any[]).length > 0;
+      const accepted = (i.decisions as any[]).some((d) => d.response_type === "accept") && i.revision_applied;
       let result: "met" | "unmet" | "unknown" = "unmet";
       let proposed: "RESOLVED" | "UNRESOLVED" | "WITHDRAWN" = "UNRESOLVED";
       let follow: string | null = null;

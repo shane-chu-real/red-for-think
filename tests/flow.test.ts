@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { renderMarkdown } from "@/core/outputs";
+import type { DecisionStatus } from "@/core/types";
 import { getOutput } from "@/server/service";
 import { makeHarness } from "./harness";
 
@@ -42,5 +44,13 @@ describe("전체 흐름(모의 응답)", () => {
     const arts = (await h.db.query("select output_snapshot_id from artifacts where project_id = $1", [id])).rows;
     expect(new Set(arts.map((a) => a.output_snapshot_id)).size).toBe(1);
     expect(arts.length).toBe(4);
+
+    // 산출물에 나오는 F 번호를 풀어 볼 수 있게, 스냅샷 시점의 사실 목록이 함께 오고 Markdown 끝에 실린다
+    expect(out!.refs.facts.map((f) => f.fact_id)).toEqual(s.plan.current!.content.facts.map((f) => f.fact_id));
+    const a = out!.artifacts as Record<string, never>;
+    const md = renderMarkdown({ title: out!.title, record: out!.record!, decisionStatus: out!.snapshot.decision_status as DecisionStatus, planDoc: a.plan_doc, storyline: a.storyline, qa: a.qa, debate: a.debate_log, refs: out!.refs });
+    expect(md).toContain("## 참조 목록");
+    expect(md).toContain("| F-001 | 대상 인원 | 300명 | 사용자 진술 |");
+    expect(md).toContain("| F-002 | 예산 | 미정 | 미확인 |");
   });
 });

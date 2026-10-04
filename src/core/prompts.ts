@@ -1,6 +1,7 @@
 import {
   AUDIENCE_LABELS,
   FOCUS_ROLES,
+  ISSUE_STATE_LABELS,
   LIMITS,
   PROJECT_TYPE_LABELS,
   PROMPT_VERSION,
@@ -8,7 +9,7 @@ import {
   type Role,
   type Task,
 } from "./constants";
-import { claimIds } from "./plan";
+import { changedSince, claimIds } from "./plan";
 import { strictJsonSchema } from "./schemas";
 import { allMissingReviews, findingLimit, sortedOpenIssues, unresolvedCritical } from "./state";
 import type { Issue, PlanContent, ProjectState, RunParams, SourceDoc } from "./types";
@@ -41,6 +42,7 @@ export const COMMON_INSTRUCTIONS = `당신은 개인용 기획 토론 웹앱 '�
 
 [태도]
 - 한국어 존대어로 구체적으로 씁니다. 근거 없는 칭찬, 추상적인 공격("리스크가 있다" 같은 말), 인신공격을 하지 않습니다. 구체적으로 지적할 것이 없으면 없다고 반환합니다.
+- 사람이 읽는 문장에는 OPEN·RESOLVED·major 같은 내부 코드를 쓰지 않습니다. 쟁점 상태는 state_label의 표현(미대응, 해소 등)으로, 심각도는 치명·보완·사소로 씁니다. I-001·C-001·F-001·SRC-001 같은 ID는 그대로 씁니다.
 - 아이디어가 반드시 추진되어야 한다고 전제하지 않습니다. 현상 유지, 다른 대안, 범위 축소, 추가 조사, 중단도 검토합니다. 이번 결정이 탐색·파일럿·확대 중 무엇인지에 맞춰 필요한 근거 수준을 판단합니다.
 
 [서버가 정한 범위]
@@ -131,6 +133,7 @@ function issueBrief(i: Issue) {
     role: ROLE_LABELS[i.role],
     severity: i.severity,
     state: i.state,
+    state_label: ISSUE_STATE_LABELS[i.state],
     target_claim_ids: i.target_claim_ids,
     critique: i.critique,
   };
@@ -154,7 +157,8 @@ const TASK_INSTRUCTIONS: Record<Task, (state: ProjectState, p: RunParams) => str
 - 결론(기획 방향이나 결정)에 영향을 주는 미확인 사항만 질문합니다. 이미 답한 내용은 다시 묻지 않습니다. 질문은 최대 ${LIMITS.maxIntakeQuestions}개이며 적을수록 좋습니다.
 - 사내 AI 과제는 대상 업무와 현재 소요 시간·사용할 데이터와 민감도·권한을, 교육 과정은 대상 인원과 직급·교육 방식과 시간·교육 후 현업에서 달라질 행동과 측정을, 신규 사업은 타깃 고객의 문제·대안(경쟁·현재 방식)·수요 근거를 확인합니다.
 - 사용자가 모른다고 답한 사항은 다시 묻지 말고 info_items에 kind=unknown으로 남깁니다.
-- 지금까지의 입력에서 확인된 정보를 info_items로 정리합니다(kind 구분). 지어내지 않습니다.
+- 이번 출력은 이전 목록을 대체합니다. 화면에는 이번 questions만 표시되므로, previous_questions 중 아직 답을 받지 못했고 여전히 결론에 영향을 주는 질문은 (필요하면 다듬어) 이번 questions에 다시 넣습니다. 사용자의 자유 답변(info_items의 사용자 진술)으로 이미 답이 된 질문은 넣지 않습니다.
+- info_items에는 지금까지의 입력에서 확인된 정보를 전부 다시 정리해 넣습니다(kind 구분). 지어내지 않습니다.
 - 뼈대를 쓰기에 충분하면 ready_for_outline=true로 하고 questions는 빈 배열로 둡니다.
 - type_suggestion은 입력된 유형이 명백히 맞지 않을 때만 제안하고, 아니면 null입니다. note는 한 문장 이내입니다.`,
 
@@ -196,7 +200,9 @@ ${ROLE_GUIDES[role]}
 
   revise: (_s, p) => `[역할: 작성자 — 변경안]
 - issues_to_address(사용자가 수용한 쟁점)와 change_requests를 반영한 변경안을 제안합니다. 사용자 답변 원문의 취지를 따릅니다.
-- changes: 기존 claim 수정(modify, claim_id 필수), 추가(add, section_key 필수, claim_id=null), 삭제(remove, claim_id 필수). 숫자는 fact_changes로 바꿉니다(modify·remove는 fact_id 필수, add는 fact_id=null).
+- 기획 본문은 plan의 claim입니다. 반영하는 쟁점과 변경 요청마다 관련 claim을 changes로 실제로 고칩니다. change_summary와 cascade_impacts는 설명일 뿐 기획을 바꾸지 않으므로, 거기에만 쓰고 claim을 그대로 두면 반영되지 않은 것입니다.
+- changes: 기존 claim 수정(modify, claim_id 필수), 추가(add, section_key 필수, claim_id=null), 삭제(remove, claim_id 필수). 숫자는 fact_changes로 바꿉니다(modify·remove는 fact_id 필수, add는 fact_id=null). 숫자를 추가하거나 바꾸면 그 숫자를 말하는 claim도 함께 고칩니다.
+- 변경 뒤 기획이 서로 어긋나지 않게 합니다. 바뀐 내용과 맞지 않게 되는 기존 claim(요청 결정을 바꾸면 decision 섹션, 범위·인원을 바꾸면 execution·resources·goals·stop_conditions의 관련 항목)을 빠짐없이 modify 또는 remove합니다.
 - cascade_impacts: 인원·예산·일정·KPI가 바뀌면 연쇄 영향을 before/after로 빠짐없이 적습니다. 모르는 값은 "미정"입니다.
 - 반영하지 못한 쟁점은 unaddressed에 이유와 함께 적습니다. 효과 입증처럼 수정만으로 해결되지 않는 조건은 별도로 남는다는 점을 숨기지 않습니다.
 - 스스로 해소되었다고 판단하지 않습니다. 사용자가 확인하지 않은 선택을 확정 사실로 넣지 않습니다.
@@ -204,8 +210,9 @@ ${ROLE_GUIDES[role]}
 
   judge: () => `[역할: 진행자 — 조건별 해소 판정]
 - 각 쟁점의 resolution_conditions마다 met(충족)·unmet(미충족)·unknown(판단 불가)을 판정하고 짧은 이유와 근거 refs(claim·fact·source ID)를 붙입니다. 모든 조건을 빠짐없이 판정합니다.
-- 근거는 현재 기획(plan), 실제로 적용된 변경(applied_changes), 사용자 대응(decisions·rebuttal·follow_up·evidence_notes), 허용된 자료뿐입니다.
-- 실제 수정이 적용되지 않았으면 충족이 아닙니다. 보류나 "확인하겠다"는 약속은 충족이 아닙니다. 근거가 충돌하거나 부족하면 unknown 또는 unmet입니다.
+- 근거는 현재 기획(plan)에 실제로 들어 있는 claim·fact의 내용, 사용자 대응(decisions·rebuttal·follow_up·evidence_notes), 허용된 자료뿐입니다. met으로 판정하면 refs에 그 근거가 되는 ID를 넣습니다.
+- changed_since_raised는 쟁점이 제기된 뒤 기획에서 실제로 바뀐 claim·fact의 ID입니다. 조건이 기획의 수정을 요구하면, 바뀐 항목의 현재 내용이 그 조건을 충족하는지 직접 확인합니다. 목록이 비어 있거나 revision_applied=false이면 수정이 적용되지 않은 것이므로 충족이 아닙니다.
+- 보류나 "확인하겠다"는 약속은 충족이 아닙니다. 근거가 충돌하거나 부족하면 unknown 또는 unmet입니다.
 - proposed_state: 모든 조건이 met이면 RESOLVED, 반박이 타당해 지적 자체가 부적절하거나 범위 밖이면 WITHDRAWN, 그 외는 UNRESOLVED입니다.
 - 반박이 타당하면 억지로 재반박하지 않습니다. 설명이 부족하고 follow_up_allowed=true이면 구체적인 질문 하나를 follow_up_question에 넣고, 아니면 null입니다.
 - 사용자 답변을 대신 만들어 판정하지 않습니다. 기존 조건을 근거 없이 늘리지 않습니다. 사용자 진술에만 의존했다면 relies_on_user_confirmation=true입니다.`,
@@ -258,7 +265,10 @@ function buildContext(task: Task, state: ProjectState, p: RunParams, sources: So
     case "outline":
       return {
         ...base,
-        intake_answers: state.intake.questions.map((q) => ({ question: q.text, answer: q.answer ?? "(미응답 — 미확인으로 다룰 것)" })),
+        // 답하지 않은 질문은 마지막 묶음 것만 넘긴다(이전 묶음의 미응답 질문은 마지막 묶음이 대체했다).
+        intake_answers: state.intake.questions
+          .filter((q) => q.answer !== null || q.batch === state.intake.batches)
+          .map((q) => ({ question: q.text, answer: q.answer ?? "(미응답 — 미확인으로 다룰 것)" })),
         info_items: state.intake.info_items.map((i) => ({ kind: i.kind, text: i.text })),
         previous_draft: state.outline_draft ? planView(state.outline_draft.content) : null,
         feedback: p.feedback ?? null,
@@ -332,9 +342,8 @@ function buildContext(task: Task, state: ProjectState, p: RunParams, sources: So
             rebuttal: i.rebuttal,
             follow_up: i.follow_up,
             evidence_notes: i.evidence_notes,
-            applied_changes: state.revisions
-              .filter((r) => i.applied_revision_ids.includes(r.revision_id))
-              .map((r) => ({ revision_id: r.revision_id, change_summary: r.change_summary, cascade_impacts: r.cascade_impacts })),
+            revision_applied: i.applied_revision_ids.length > 0,
+            changed_since_raised: plan ? changedSince(plan, state.plan.removed_claims, i.raised_on_version) : null,
             follow_up_allowed: i.state === "REBUTTAL_PENDING" && i.follow_ups_used < LIMITS.maxFollowUps,
           })),
       };
@@ -405,7 +414,7 @@ export function buildRunPayload(task: Task, params: RunParams, state: ProjectSta
   const schema = strictJsonSchema(task);
   let developer = `출력 규칙: 아래 JSON Schema를 정확히 따르는 JSON 객체 하나만 출력합니다. 모든 필드를 넣고, 값이 없으면 빈 배열·빈 문자열·null(허용되는 곳)을 씁니다. 코드펜스나 설명을 붙이지 않습니다.\n작업 이름: ${task}\nJSON Schema:\n${JSON.stringify(schema)}`;
   if (params.correction_of) {
-    developer += `\n\n[교정 요청] 직전 응답이 검증을 통과하지 못했습니다. 아래 오류를 고쳐 다시 출력하십시오. 내용은 유지하되 형식·참조 오류만 고칩니다.\n오류: ${(params.correction_errors ?? []).join(" / ")}\n직전 응답:\n${params.previous_output ?? ""}`;
+    developer += `\n\n[교정 요청] 직전 응답이 검증을 통과하지 못했습니다. 아래 오류를 고쳐 다시 출력하십시오. 오류에서 요구한 부분만 고치고 나머지 내용은 유지합니다.\n오류: ${(params.correction_errors ?? []).join(" / ")}\n직전 응답:\n${params.previous_output ?? ""}`;
   }
   return {
     task,

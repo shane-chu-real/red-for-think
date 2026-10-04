@@ -5,7 +5,7 @@ import { buildRunPayload } from "@/core/prompts";
 import { createProject, reduce, type ReducerContext } from "@/core/reducer";
 import { parseAction } from "@/core/schemas";
 import { unresolvedCritical } from "@/core/state";
-import { DomainError, type Effect, type ProjectState, type ReduceResult, type SourceDoc } from "@/core/types";
+import { DomainError, type Effect, type Fact, type PlanContent, type ProjectState, type ReduceResult, type SourceDoc } from "@/core/types";
 import type { Db, Queryable } from "./db";
 
 export interface ActionRequest {
@@ -238,10 +238,15 @@ export async function getOutput(db: Db, projectId: string, snapshotId: string) {
   const arts = (await db.query("select artifact_id, type, content, validation, unresolved_critical_ids, generated_at from artifacts where output_snapshot_id = $1 and project_id = $2", [snapshotId, projectId])).rows;
   const proj = (await db.query("select title, state from projects where project_id = $1", [projectId])).rows[0];
   const record = (proj.state as ProjectState).outputs.find((o) => o.output_snapshot_id === snapshotId) ?? null;
+  // 산출물에 나오는 F·SRC 번호를 읽는 사람이 풀어 볼 수 있게, 스냅샷 시점의 사실 목록과 자료 제목을 함께 준다.
+  const plan = (await db.query("select content from plan_versions where plan_version_id = $1 and project_id = $2", [snap.plan_version_id, projectId])).rows[0];
+  const sourceSet = new Set(snap.source_set as string[]);
+  const sources = (await db.query<{ source_id: string; title: string }>("select source_id, title from sources where project_id = $1 order by source_id", [projectId])).rows.filter((s) => sourceSet.has(s.source_id));
   return {
     title: proj.title as string,
     record,
     snapshot: { ...snap, created_at: iso(snap.created_at) },
     artifacts: Object.fromEntries(arts.map((a) => [a.type, a.content])),
+    refs: { facts: ((plan?.content as PlanContent | undefined)?.facts ?? []) as Fact[], sources },
   };
 }

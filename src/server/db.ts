@@ -113,8 +113,11 @@ export function getDb(): Promise<Db> {
   if (!dbPromise) {
     dbPromise = (async () => {
       const url = process.env.DATABASE_URL;
-      if (url) return createPgDb(url);
-      if (process.env.NODE_ENV === "production") {
+      const production = process.env.NODE_ENV === "production";
+      // 로컬 개발에서는 .env.local에 운영 DB 주소가 있어도 기본으로 쓰지 않는다(운영 데이터에 실수로 쓰지 않게).
+      // 로컬에서 원격 DB를 꼭 써야 하면 RFT_USE_REMOTE_DB=1을 명시한다.
+      if (url && (production || process.env.RFT_USE_REMOTE_DB === "1")) return createPgDb(url);
+      if (production) {
         throw new Error("DATABASE_URL이 설정되지 않았습니다. Vercel에 Neon을 연결해 주세요.");
       }
       // 로컬 개발: 파일 기반 내장 Postgres(PGlite)를 쓰고 스키마를 자동 적용한다.

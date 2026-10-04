@@ -1,8 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { AUDIENCE_LABELS, DECISION_TYPE_LABELS, END_REASON_LABELS, ISSUE_STATE_LABELS, OUTCOME_LABELS, ROLE_LABELS, SEVERITY_LABELS } from "@/core/constants";
-import { scopeNotes } from "@/core/outputs";
+import { AUDIENCE_LABELS, DECISION_TYPE_LABELS, END_REASON_LABELS, INFO_KIND_LABELS, ISSUE_STATE_LABELS, OUTCOME_LABELS, ROLE_LABELS, SEVERITY_LABELS } from "@/core/constants";
+import { factValue, scopeNotes, type OutputRefs } from "@/core/outputs";
 import type { DebateLogContent, DecisionStatus, OutputRecord, PlanDocContent, QaContent, StorylineContent } from "@/core/types";
 import { apiGet, kst } from "@/lib/client";
 import { Badge, Button, ErrorNote } from "./ui";
@@ -12,6 +12,7 @@ interface OutputData {
   record: OutputRecord;
   snapshot: { output_snapshot_id: string; decision_status: DecisionStatus; created_at: string };
   artifacts: { plan_doc: PlanDocContent; storyline: StorylineContent; qa: QaContent; debate_log: DebateLogContent };
+  refs: OutputRefs;
 }
 
 const TABS = [
@@ -250,6 +251,48 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
               </tbody>
             </table>
           </div>
+        </section>
+      )}
+
+      {(data.refs.facts.length > 0 || data.refs.sources.length > 0) && (
+        <section className="rounded-lg border border-slate-200 bg-white p-4">
+          <h2 className="text-lg font-bold">참조 목록</h2>
+          <p className="mt-1 text-xs text-slate-500">산출물에 나오는 F·SRC 번호의 풀이입니다(이 스냅샷 시점 기준).</p>
+          {data.refs.facts.length > 0 && (
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full min-w-[640px] border-collapse">
+                <thead>
+                  <tr>
+                    <th className={th}>ID</th>
+                    <th className={th}>항목</th>
+                    <th className={th}>값</th>
+                    <th className={th}>구분</th>
+                    <th className={th}>비고</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.refs.facts.map((f) => (
+                    <tr key={f.fact_id}>
+                      <td className={`${td} whitespace-nowrap font-mono`}>{f.fact_id}</td>
+                      <td className={td}>{f.label}</td>
+                      <td className={`${td} whitespace-nowrap`}>{factValue(f)}</td>
+                      <td className={`${td} whitespace-nowrap`}>{INFO_KIND_LABELS[f.kind]}</td>
+                      <td className={td}>{f.note}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {data.refs.sources.length > 0 && (
+            <ul className="ml-5 mt-2 list-disc text-sm text-slate-800">
+              {data.refs.sources.map((s) => (
+                <li key={s.source_id}>
+                  <span className="font-mono text-xs">{s.source_id}</span> {s.title}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
     </main>

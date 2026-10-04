@@ -211,6 +211,8 @@ export class ChatGPTSubscriptionProvider implements Provider {
         else if (ev.type === "response.completed") {
           completed = true;
           usage = ev.response.usage ?? null;
+          // 요청 ID 헤더가 없으면 응답 ID를 추적용으로 남긴다.
+          requestId ??= ev.response.id ?? null;
         } else if (ev.type === "response.failed") {
           const err = ev.response.error;
           const m = mapProviderError(err?.code, undefined);
