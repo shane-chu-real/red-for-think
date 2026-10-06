@@ -64,6 +64,7 @@ function review(c: Ctx, role: Role) {
       {
         severity,
         target_claim_ids: [claim.claim_id],
+        headline: `[모의] ${ROLE_LABELS[role]}: 근거가 부족함`,
         critique: `[모의] ${ROLE_LABELS[role]} 관점: '${String(claim.text).slice(0, 30)}'의 근거가 부족합니다.`,
         reason: "[모의] 결정을 판단할 근거 자료가 제시되지 않았습니다.",
         source_refs: [],

@@ -316,6 +316,25 @@ describe("실제 AI 시험에서 나온 문제", () => {
   });
 });
 
+// 실사용 의견(2026-10-06): 쟁점 설명이 장황하다 → 한 줄 의견(headline)을 받아 카드 첫 줄에 쓴다
+describe("쟁점 한 줄 의견", () => {
+  it("검토 결과의 한 줄 의견이 쟁점까지 이어지고, 한 줄 의견이 없는 이전 형식 응답도 받는다", async () => {
+    const h = await makeHarness();
+    h.override("review:finance", (p) => {
+      const out = mock(p);
+      delete out.findings[0].headline; // 배포 전에 만들어진 작업의 응답 형식
+      return out;
+    });
+    const id = await h.toReply();
+    const s = await h.state(id);
+    const finance = s.issues.find((i) => i.role === "finance")!;
+    const risk = s.issues.find((i) => i.role === "risk")!;
+    expect(finance.headline).toBe("");
+    expect(risk.headline).toBe("[모의] 리스크: 근거가 부족함");
+    expect(s.pending_runs).toEqual([]); // 실패한 작업 없음
+  });
+});
+
 describe("요청 검사", () => {
   it("프로토타입 키 같은 이름의 동작도 허용 목록 밖이면 입력 오류로 거절한다", async () => {
     const h = await makeHarness();

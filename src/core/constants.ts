@@ -1,7 +1,7 @@
 // 도메인 상수 — 웹과 실행기가 함께 쓴다.
 
 export const SCHEMA_VERSION = 1;
-export const PROMPT_VERSION = "p2";
+export const PROMPT_VERSION = "p3";
 
 export const ROLES = ["finance", "risk", "field", "executive", "it"] as const;
 export type Role = (typeof ROLES)[number];

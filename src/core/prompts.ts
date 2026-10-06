@@ -62,6 +62,11 @@ export const COMMON_INSTRUCTIONS = `당신은 개인용 기획 토론 웹앱 '�
 - 보완: 방향은 유지하되 실행·근거·설명을 강화해야 하는 경우. 사소: 의사결정에 영향이 없는 표현 문제.
 - 위험의 심각도와 증거의 확실성은 따로 판단합니다. 검토 강도는 깊이를 뜻하며, 강도 때문에 심각도 기준을 바꾸거나 무례하게 말하지 않습니다.`;
 
+// 쟁점 카드·판정처럼 화면에 바로 보이는 문장의 쓰기 규칙(실사용 의견 "장황하고 어렵다", 2026-10-06)
+const PLAIN_STYLE = `- 화면에 바로 보이는 문장이므로 쉽게 씁니다. 결론부터, 한 문장에 한 가지만, 한 문장은 60자 안팎으로 씁니다.
+- '담당 주체·기간·투입 한도·종료 산출물'처럼 명사를 늘어놓지 말고 '누가, 언제까지, 얼마로 할지'처럼 풀어 씁니다. 기회비용·공수·정합화 같은 어려운 말은 일상어로 바꿉니다.
+- 같은 말을 필드마다 되풀이하지 않습니다. 근거 ID(C-…, F-…, SRC-…)는 문장에 늘어놓지 말고 ID 필드에 넣습니다.`;
+
 const INTENSITY: Record<1 | 2 | 3, string> = {
   1: "강도 1 — 핵심 전제와 치명 위험만 봅니다.",
   2: "강도 2 — 실제 임원·유관부서 보고에 필요한 근거·실행·대안까지 봅니다.",
@@ -135,6 +140,7 @@ function issueBrief(i: Issue) {
     state: i.state,
     state_label: ISSUE_STATE_LABELS[i.state],
     target_claim_ids: i.target_claim_ids,
+    headline: i.headline ?? "",
     critique: i.critique,
   };
 }
@@ -178,7 +184,15 @@ ${ROLE_GUIDES[role]}
 - ${INTENSITY[state.settings.intensity]}
 - 검토 대상은 context.plan(확정 기획)뿐입니다. 다른 검토자의 의견이나 작성자의 내부 의도는 알 수 없습니다.
 - 지적은 최대 ${limit}개입니다. 개수를 채우려고 지적하지 않습니다. 없으면 findings를 비우고 no_findings_reason에 이유를 씁니다(있으면 빈 문자열).
-- 각 지적: severity, target_claim_ids(대상 claim ID 1개 이상), critique(지적 한 문장), reason(왜 문제인지 1~2문장), source_refs, uncertainties(무엇이 불확실한지), expected_question(보고 자리에서 실제로 나올 질문), resolution_conditions(무엇이 있으면 해소되는지, 검증 가능한 조건 1~3개).
+- 지적 하나는 화면에서 카드 한 장으로 보이고, 처음에는 headline과 critique만 보입니다. 첫 줄만 읽어도 무엇이 문제인지 알 수 있어야 합니다.
+  · headline: 무엇이 문제인지 한 줄, 30자 이내. '~가 정해지지 않음', '~를 비교할 기준이 없음'처럼 짧게 끝냅니다.
+  · critique: 무엇이 왜 문제인지 쉬운 말 1~2문장. headline을 그대로 되풀이하지 않습니다.
+  · reason: 이 문제가 결정에 왜 중요한지 1문장.
+  · resolution_conditions: 해결하려면 할 일 1~3개. 각각 한 줄로, 나중에 했는지 확인할 수 있게 씁니다.
+  · expected_question: 보고 자리에서 나올 질문 1개, 짧게. uncertainties: 아직 모르는 것 1문장(없으면 빈 문자열).
+  · severity, target_claim_ids(대상 claim ID 1개 이상), source_refs도 채웁니다.
+- 문체 예시(내용은 따라 하지 않음) — 나쁨: "측정안과 확대 보류 조건이 제작·사용 여부와 지원 비용에 집중되어 있어, 기존 도구 활용 대비 업무 효과와 참여자 시간의 기회비용을 비교할 기준이 빠져 있습니다." / 좋음: headline "일이 실제로 나아졌는지 잴 기준이 없음", critique "에이전트를 썼는지만 확인합니다. 기존 방식보다 시간이 줄었는지, 결과가 좋아졌는지는 재지 않습니다."
+${PLAIN_STYLE}
 - context.existing_issues에 같은 문제가 있으면 반복하지 않습니다. 해소된(RESOLVED) 쟁점은 전제가 바뀐 경우에만 reopen_issue_id와 reopen_reason(어떤 변경 때문인지)을 씁니다. 그 외에는 reopen_issue_id=null, reopen_reason은 빈 문자열입니다.
 - 범위가 다른 문제는 새 지적입니다. 다른 역할의 의도를 추측해 방어하지 않습니다.`;
   },
@@ -196,7 +210,7 @@ ${ROLE_GUIDES[role]}
 - 어느 쟁점에 대한 말인지, 수용인지 반박인지 모호하면 mappings에 넣지 말고 clarifications에 그 부분만 묻는 질문을 넣습니다.
 - "확인하겠다", "넣겠다" 같은 약속은 hold입니다.
 - 쟁점과 별개로 기획을 바꿔 달라는 요청(인원·예산·일정 변경 등)은 change_requests에 취지를 살려 넣습니다.
-- quote에는 해당 부분 원문을 그대로 옮기고, interpreted_action에는 앞으로 할 일을 한 문장으로 씁니다.`,
+- quote에는 해당 부분 원문을 그대로 옮기고, interpreted_action에는 앞으로 할 일을 짧은 한 문장(40자 안팎)으로 씁니다. 질문(clarifications)도 짧고 쉽게 씁니다.`,
 
   revise: (_s, p) => `[역할: 작성자 — 변경안]
 - issues_to_address(사용자가 수용한 쟁점)와 change_requests를 반영한 변경안을 제안합니다. 사용자 답변 원문의 취지를 따릅니다.
@@ -215,7 +229,9 @@ ${ROLE_GUIDES[role]}
 - 보류나 "확인하겠다"는 약속은 충족이 아닙니다. 근거가 충돌하거나 부족하면 unknown 또는 unmet입니다.
 - proposed_state: 모든 조건이 met이면 RESOLVED, 반박이 타당해 지적 자체가 부적절하거나 범위 밖이면 WITHDRAWN, 그 외는 UNRESOLVED입니다.
 - 반박이 타당하면 억지로 재반박하지 않습니다. 설명이 부족하고 follow_up_allowed=true이면 구체적인 질문 하나를 follow_up_question에 넣고, 아니면 null입니다.
-- 사용자 답변을 대신 만들어 판정하지 않습니다. 기존 조건을 근거 없이 늘리지 않습니다. 사용자 진술에만 의존했다면 relies_on_user_confirmation=true입니다.`,
+- 사용자 답변을 대신 만들어 판정하지 않습니다. 기존 조건을 근거 없이 늘리지 않습니다. 사용자 진술에만 의존했다면 relies_on_user_confirmation=true입니다.
+- 판정 문장은 짧게 씁니다. reason은 무엇이 됐고 무엇이 빠졌는지 1~2문장, 조건별 reason은 1문장입니다. follow_up_question은 사용자가 바로 답할 수 있는 짧은 질문 하나입니다.
+${PLAIN_STYLE}`,
 
   assess: () => `[역할: 진행자 — 결과 판단]
 - outcome을 제안합니다: RESOLVED_CORE(핵심 쟁점 해소), CONDITIONAL(조건부 진행 또는 확인 필요), REDESIGN_OR_STOP(재설계 또는 중단 권고).

@@ -126,6 +126,8 @@ export const AI_OUTPUT_SCHEMAS = {
       z.object({
         severity: z.enum(SEVERITIES),
         target_claim_ids: strArr,
+        // 한 줄 의견(쟁점 카드 첫 줄). 이전 형식 응답에는 없으므로 비어 있어도 받는다.
+        headline: str.default(""),
         critique: str,
         reason: str,
         source_refs: strArr,

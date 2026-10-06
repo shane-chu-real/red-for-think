@@ -245,7 +245,7 @@ export function ReplyPanel({ view, act, busy }: PanelProps) {
         }
       >
         <p className="text-sm text-slate-600">
-          치명 이슈와 먼저 풀어야 할 전제부터 {LIMITS.displayBatch}개씩 보여 드립니다. 버튼으로 답하거나 아래 입력창에 자유롭게 답해 주세요. 일부만 답해도 되며, 답하지 않은 {unanswered}건은 미응답으로 남습니다.
+          중요한 순서로 {LIMITS.displayBatch}개씩 보여 드립니다. 버튼이나 아래 입력창으로 답해 주세요. 답하지 않은 {unanswered}건은 미응답으로 남습니다.
         </p>
         {pendingRequests.length > 0 && <p className="mt-2 text-sm text-indigo-800">대기 중인 변경 요청: {pendingRequests.map((c) => c.text).join(" / ")}</p>}
       </Card>

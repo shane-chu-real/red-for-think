@@ -99,6 +99,7 @@ export interface Issue {
   role: Role;
   severity: Severity;
   target_claim_ids: string[];
+  headline?: string; // 한 줄 의견. p3 이전에 만든 쟁점에는 없다.
   critique: string;
   reason: string;
   source_refs: string[];
@@ -160,6 +161,7 @@ export interface Candidate {
   extra: boolean;
   severity: Severity;
   target_claim_ids: string[];
+  headline: string;
   critique: string;
   reason: string;
   source_refs: string[];

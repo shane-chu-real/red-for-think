@@ -233,6 +233,7 @@ export function createIssueFromCandidate(
     role: c.role,
     severity: c.severity,
     target_claim_ids: c.target_claim_ids,
+    headline: c.headline,
     critique: c.critique,
     reason: c.reason,
     source_refs: c.source_refs,
