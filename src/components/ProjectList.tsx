@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AUDIENCES, AUDIENCE_LABELS, LIMITS, PHASE_LABELS, PROJECT_TYPES, PROJECT_TYPE_LABELS, type Audience, type Phase, type ProjectType } from "@/core/constants";
 import { apiGet, apiPost, kst, newKey, type StatusView } from "@/lib/client";
+import { pasteTable } from "@/lib/table";
 import { StatusBar } from "./StatusBar";
 import { Badge, Button, Card, ErrorNote, Field, inputClass } from "./ui";
 
@@ -103,7 +104,7 @@ export function ProjectList() {
                 </Button>
               </div>
               <p className="text-xs text-muted">
-                파일 업로드는 지원하지 않습니다. PDF·Word 등은 내용을 복사해 붙여 주세요. 자료 1건 {LIMITS.sourceMaxChars.toLocaleString()}자, 합계 {LIMITS.sourcesTotalMaxChars.toLocaleString()}자까지이며, 넘으면 자르지 않고 거절합니다.
+                파일 업로드는 지원하지 않습니다. PDF·Word 등은 내용을 복사해 붙여 주세요. 자료 1건 {LIMITS.sourceMaxChars.toLocaleString()}자, 합계 {LIMITS.sourcesTotalMaxChars.toLocaleString()}자까지이며, 넘으면 자르지 않고 거절합니다. 엑셀 표는 칸을 복사해 붙이면 &apos;열 이름: 값&apos; 글로 바뀌어 들어갑니다(첫 줄을 열 이름으로 씁니다).
               </p>
               {sources.map((s, i) => (
                 <div key={i} className="space-y-2 rounded-2xl border border-line p-3">
@@ -113,7 +114,14 @@ export function ProjectList() {
                       삭제
                     </Button>
                   </div>
-                  <textarea className={inputClass} rows={4} placeholder="자료 내용을 붙여넣으세요" value={s.text} onChange={(e) => setSources(sources.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} />
+                  <textarea
+                    className={inputClass}
+                    rows={4}
+                    placeholder="자료 내용을 붙여넣으세요"
+                    value={s.text}
+                    onChange={(e) => setSources(sources.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))}
+                    onPaste={(e) => pasteTable(e, (text) => setSources(sources.map((x, j) => (j === i ? { ...x, text } : x))))}
+                  />
                   <p className="text-xs text-muted">{s.text.trim().length.toLocaleString()}자</p>
                 </div>
               ))}

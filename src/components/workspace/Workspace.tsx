@@ -5,6 +5,7 @@ import { ACTOR_LABELS, LIMITS, PHASES, PHASE_LABELS, PROJECT_TYPE_LABELS, ROLES,
 import { isUnresolved, unresolvedCritical } from "@/core/state";
 import type { ProjectState } from "@/core/types";
 import { apiGet, apiPost, kst, newKey } from "@/lib/client";
+import { pasteTable } from "@/lib/table";
 import { StatusBar } from "../StatusBar";
 import { Badge, Button, Card, ErrorNote, inputClass } from "../ui";
 import { IssueCard } from "./IssueCard";
@@ -361,7 +362,8 @@ function Sources({ view, act, busy }: { view: ProjectView; act: Act; busy: boole
       {view.state.phase !== "GENERATING" && (
         <div className="space-y-2 border-t border-line-soft pt-3">
           <input className={inputClass} placeholder="자료 이름" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="자료 이름" />
-          <textarea className={inputClass} rows={4} placeholder="자료 내용을 붙여넣으세요 (파일 업로드는 지원하지 않습니다)" value={body} onChange={(e) => setBody(e.target.value)} aria-label="자료 내용" />
+          <textarea className={inputClass} rows={4} placeholder="자료 내용을 붙여넣으세요 (파일 업로드는 지원하지 않습니다)" value={body} onChange={(e) => setBody(e.target.value)} onPaste={(e) => pasteTable(e, setBody)} aria-label="자료 내용" />
+          <p className="text-xs text-muted">엑셀 표는 칸을 복사해 붙이면 &apos;열 이름: 값&apos; 글로 바뀌어 들어갑니다(첫 줄을 열 이름으로 씁니다).</p>
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
