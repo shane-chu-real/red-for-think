@@ -1,19 +1,166 @@
 @import "tailwindcss";
 
+/* '원탁 토론' 테마(시안 C-1). 색은 모두 여기서 정하고, 화면 코드는 의미 이름(ink·muted·accent …)만 쓴다. */
+@theme {
+  --color-ground: #0a0918; /* 화면 바탕 */
+  --color-deep: #110f28; /* 탁자·도넛 안쪽처럼 더 깊은 면 */
+  --color-surface: rgb(255 255 255 / 0.05); /* 유리 카드 */
+  --color-surface-2: rgb(255 255 255 / 0.09); /* 카드 안의 블록·칩 */
+  --color-line: rgb(255 255 255 / 0.14);
+  --color-line-soft: rgb(255 255 255 / 0.08);
+  --color-ink: #f5f4ff; /* 제목·본문 */
+  --color-soft: #cfcbea; /* 긴 본문 */
+  --color-muted: #b4b0d6; /* 설명·메타 */
+  --color-faint: #908cba; /* ID·자리표시 글자 */
+  --color-accent: #d4ff4f; /* 주요 버튼·'나' */
+  --color-accent-hi: #e2ff85;
+  --color-on-accent: #0a0918;
+  --color-danger: #ff9ab0;
+  --color-danger-line: rgb(255 107 139 / 0.45);
+  --color-danger-bg: rgb(255 107 139 / 0.14);
+  --color-warn: #ffd27a;
+  --color-warn-line: rgb(255 194 75 / 0.45);
+  --color-warn-bg: rgb(255 194 75 / 0.12);
+  --color-ok: #8ff5d0;
+  --color-ok-bg: rgb(46 230 168 / 0.14);
+  --color-violet: #d3b3ff;
+  --color-violet-bg: rgb(181 123 255 / 0.18);
+}
+
+@theme inline {
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display-face), var(--font-body), sans-serif;
+}
+
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 body {
-  background: #f8fafc;
-  color: #0f172a;
+  background:
+    radial-gradient(ellipse 80% 45% at 50% -10%, rgb(124 140 255 / 0.16), transparent 70%),
+    var(--color-ground);
+  background-attachment: fixed;
+  color: var(--color-ink);
 }
 
+/* 아래 규칙은 레이어 안에 둔다. 레이어 밖에 두면 focus:outline-none·disabled:shadow-none 같은 유틸리티 클래스를 이겨 버린다. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .glass {
+    backdrop-filter: blur(14px);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 24px color-mix(in srgb, var(--color-accent) 35%, transparent);
+  }
+
+  /* 원탁: 지금 말하는(검토 중이거나 고른) 자리의 맥박과 음성 막대 */
+  .rt-pulse {
+    position: relative;
+  }
+  .rt-pulse::after {
+    content: "";
+    position: absolute;
+    inset: -8px;
+    border-radius: 9999px;
+    border: 2px solid currentColor;
+    pointer-events: none;
+    animation: rt-pulse 1.6s ease-out infinite;
+  }
+  @keyframes rt-pulse {
+    from {
+      transform: scale(1);
+      opacity: 0.9;
+    }
+    to {
+      transform: scale(1.45);
+      opacity: 0;
+    }
+  }
+  .rt-eq {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 12px;
+  }
+  .rt-eq i {
+    display: block;
+    width: 3px;
+    height: 4px;
+    border-radius: 2px;
+    background: currentColor;
+    animation: rt-eq 0.9s ease-in-out infinite;
+  }
+  .rt-eq i:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+  .rt-eq i:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+  @keyframes rt-eq {
+    0%,
+    100% {
+      height: 3px;
+    }
+    50% {
+      height: 12px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rt-pulse::after,
+    .rt-eq i {
+      animation: none;
+    }
+  }
+}
+
+/* 인쇄·PDF: 같은 화면을 밝은 색으로 바꿔 찍는다(색 이름이 모두 변수라 값만 바꾸면 된다). */
 @media print {
-  .no-print {
-    display: none !important;
+  :root {
+    color-scheme: light;
+    --color-ground: #ffffff;
+    --color-deep: #ffffff;
+    --color-surface: #ffffff;
+    --color-surface-2: #f3f3f6;
+    --color-line: #c9c9d3;
+    --color-line-soft: #e3e3ea;
+    --color-ink: #111118;
+    --color-soft: #22222c;
+    --color-muted: #44444f;
+    --color-faint: #66667a;
+    --color-accent: #111118;
+    --color-accent-hi: #111118;
+    --color-on-accent: #ffffff;
+    --color-danger: #a3122f;
+    --color-danger-line: #d9a0ab;
+    --color-danger-bg: #fbeaee;
+    --color-warn: #7a5200;
+    --color-warn-line: #e0c58a;
+    --color-warn-bg: #fbf3df;
+    --color-ok: #0b6b4f;
+    --color-ok-bg: #e3f5ee;
+    --color-violet: #5b2ea6;
+    --color-violet-bg: #efe6fb;
   }
   body {
     background: #ffffff;
+  }
+  .no-print {
+    display: none !important;
+  }
+  @layer components {
+    .glass {
+      backdrop-filter: none;
+    }
+    .glow-accent {
+      box-shadow: none;
+    }
   }
 }

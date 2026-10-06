@@ -24,8 +24,8 @@ const TABS = [
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
-const th = "border border-slate-300 bg-slate-100 px-2 py-1 text-left align-top text-xs font-semibold";
-const td = "border border-slate-300 px-2 py-1 align-top text-sm";
+const th = "border border-line bg-surface-2 px-2 py-1 text-left align-top text-xs font-semibold";
+const td = "border border-line px-2 py-1 align-top text-sm";
 
 export function OutputView({ projectId, snapshotId }: { projectId: string; snapshotId: string }) {
   const [data, setData] = useState<OutputData | null>(null);
@@ -39,7 +39,7 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
     });
   }, [projectId, snapshotId]);
 
-  if (!data) return <main className="mx-auto max-w-5xl p-4">{error ? <ErrorNote message={error} /> : <p className="text-sm text-slate-500">불러오는 중…</p>}</main>;
+  if (!data) return <main className="mx-auto max-w-5xl p-4">{error ? <ErrorNote message={error} /> : <p className="text-sm text-muted">불러오는 중…</p>}</main>;
 
   const { record, artifacts } = data;
   const ds = data.snapshot.decision_status;
@@ -49,12 +49,12 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
   return (
     <main className="mx-auto max-w-5xl space-y-5 px-4 py-4">
       <div className="no-print flex flex-wrap items-center gap-2">
-        <Link href={`/projects/${projectId}`} className="text-sm text-indigo-700 hover:underline">
+        <Link href={`/projects/${projectId}`} className="text-sm text-accent hover:underline">
           ← 작업실
         </Link>
         <div className="flex flex-wrap gap-1" role="tablist">
           {TABS.map(([key, label]) => (
-            <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)} className={`rounded px-2 py-1 text-sm ${tab === key ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-200"}`}>
+            <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)} className={`min-h-9 rounded-full px-3 py-1 text-sm ${tab === key ? "bg-accent font-bold text-on-accent" : "font-medium text-muted hover:bg-surface-2"}`}>
               {label}
             </button>
           ))}
@@ -63,15 +63,15 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
           <Button variant="secondary" onClick={() => window.print()}>
             인쇄 · PDF 저장
           </Button>
-          <a href={`/api/projects/${projectId}/outputs/${snapshotId}?format=md`} className="inline-flex min-h-9 items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50">
+          <a href={`/api/projects/${projectId}/outputs/${snapshotId}?format=md`} className="glass inline-flex min-h-10 items-center rounded-full border border-line bg-surface px-4 py-1.5 text-sm font-medium text-ink hover:bg-surface-2">
             Markdown 내려받기
           </a>
         </div>
       </div>
 
-      <header className="rounded-lg border border-slate-200 bg-white p-4">
-        <h1 className="text-xl font-bold text-slate-900">{data.title}</h1>
-        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-slate-600">
+      <header className="glass rounded-3xl border border-line bg-surface p-5">
+        <h1 className="font-display text-2xl text-ink">{data.title}</h1>
+        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-muted">
           <Badge tone="indigo">확정 기획 v{record.plan_version_no}</Badge>
           <Badge>{AUDIENCE_LABELS[record.audience]}용</Badge>
           <Badge tone={ds.outcome === "RESOLVED_CORE" ? "green" : ds.outcome === "CONDITIONAL" ? "amber" : "red"}>{OUTCOME_LABELS[ds.outcome]}</Badge>
@@ -80,15 +80,15 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
             생성 {kst(record.created_at)} · 네 산출물 모두 스냅샷 <span className="font-mono">{record.output_snapshot_id.slice(0, 8)}</span> 기준
           </span>
         </p>
-        <p className="mt-2 text-sm text-slate-800">
+        <p className="mt-2 text-sm text-ink">
           <span className="font-semibold">요청 결정({DECISION_TYPE_LABELS[ds.decision_type]})</span> {ds.decision_text}
         </p>
-        <p className="mt-1 text-sm text-slate-700">{ds.outcome_rationale}</p>
-        {ds.conditions.length > 0 && <p className="mt-1 text-sm text-slate-700">결정 전 확인 조건: {ds.conditions.join(" / ")}</p>}
-        {ds.stop_switch_criteria.length > 0 && <p className="mt-1 text-sm text-slate-700">중단·전환 기준: {ds.stop_switch_criteria.join(" / ")}</p>}
-        <p className="mt-2 text-xs text-slate-500">토론을 마쳤다는 것은 추진 승인이나 사실 검증 완료를 뜻하지 않습니다.</p>
+        <p className="mt-1 text-sm text-soft">{ds.outcome_rationale}</p>
+        {ds.conditions.length > 0 && <p className="mt-1 text-sm text-soft">결정 전 확인 조건: {ds.conditions.join(" / ")}</p>}
+        {ds.stop_switch_criteria.length > 0 && <p className="mt-1 text-sm text-soft">중단·전환 기준: {ds.stop_switch_criteria.join(" / ")}</p>}
+        <p className="mt-2 text-xs text-muted">토론을 마쳤다는 것은 추진 승인이나 사실 검증 완료를 뜻하지 않습니다.</p>
         {notes.length > 0 && (
-          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="mt-3 rounded-2xl border border-warn-line bg-warn-bg p-4 text-sm text-warn">
             <p className="font-semibold">검토 범위와 한계</p>
             <ul className="ml-4 list-disc">
               {notes.map((n) => (
@@ -98,7 +98,7 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
           </div>
         )}
         {(record.validation.errors.length > 0 || record.validation.warnings.length > 0) && (
-          <div className={`mt-3 rounded-md border p-3 text-sm ${record.validation.errors.length ? "border-red-200 bg-red-50 text-red-900" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
+          <div className={`mt-3 rounded-2xl border p-4 text-sm ${record.validation.errors.length ? "border-danger-line bg-danger-bg text-danger" : "border-line bg-surface-2 text-soft"}`}>
             <p className="font-semibold">산출물 검사 결과 (구조 검사이며 내용의 사실 여부를 보증하지 않습니다)</p>
             <ul className="ml-4 list-disc">
               {record.validation.errors.map((e) => (
@@ -113,31 +113,31 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
       </header>
 
       {show("plan_doc") && (
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <section className="glass rounded-3xl border border-line bg-surface p-5">
           <h2 className="text-lg font-bold">1. 상세 기획서</h2>
           {artifacts.plan_doc.sections.map((s) => (
             <div key={s.key} className="mt-3">
-              <h3 className="font-semibold text-slate-900">{s.title}</h3>
+              <h3 className="font-semibold text-ink">{s.title}</h3>
               {s.paragraphs.map((p, i) => (
-                <p key={i} className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
+                <p key={i} className="mt-1 whitespace-pre-wrap text-sm text-ink">
                   {p}
                 </p>
               ))}
               {s.bullets.length > 0 && (
-                <ul className="ml-5 mt-1 list-disc text-sm text-slate-800">
+                <ul className="ml-5 mt-1 list-disc text-sm text-ink">
                   {s.bullets.map((b, i) => (
                     <li key={i}>{b}</li>
                   ))}
                 </ul>
               )}
-              {[...s.issue_refs, ...s.fact_refs, ...s.source_refs].length > 0 && <p className="mt-1 font-mono text-xs text-slate-400">참조: {[...s.issue_refs, ...s.fact_refs, ...s.source_refs].join(", ")}</p>}
+              {[...s.issue_refs, ...s.fact_refs, ...s.source_refs].length > 0 && <p className="mt-1 font-mono text-xs text-faint">참조: {[...s.issue_refs, ...s.fact_refs, ...s.source_refs].join(", ")}</p>}
             </div>
           ))}
         </section>
       )}
 
       {show("storyline") && (
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <section className="glass rounded-3xl border border-line bg-surface p-5">
           <h2 className="text-lg font-bold">2. PPT 스토리라인 ({AUDIENCE_LABELS[artifacts.storyline.audience]}용)</h2>
           <div className="mt-2 overflow-x-auto">
             <table className="w-full min-w-[640px] border-collapse">
@@ -173,7 +173,7 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
             </table>
           </div>
           <h3 className="mt-4 font-semibold">헤드라인 테스트 (헤드라인만 이어 읽기)</h3>
-          <ol className="ml-5 mt-1 list-decimal text-sm text-slate-800">
+          <ol className="ml-5 mt-1 list-decimal text-sm text-ink">
             {artifacts.storyline.slides
               .filter((s) => !s.appendix)
               .map((s) => (
@@ -181,12 +181,12 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
               ))}
           </ol>
           <h3 className="mt-4 font-semibold">임원용 1분 요약</h3>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{artifacts.storyline.one_minute_summary}</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm text-ink">{artifacts.storyline.one_minute_summary}</p>
         </section>
       )}
 
       {show("qa") && (
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <section className="glass rounded-3xl border border-line bg-surface p-5">
           <h2 className="text-lg font-bold">3. 예상 질의응답</h2>
           <div className="mt-2 overflow-x-auto">
             <table className="w-full min-w-[640px] border-collapse">
@@ -216,7 +216,7 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
       )}
 
       {show("debate_log") && (
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <section className="glass rounded-3xl border border-line bg-surface p-5">
           <h2 className="text-lg font-bold">4. 논쟁 기록</h2>
           <div className="mt-2 overflow-x-auto">
             <table className="w-full min-w-[820px] border-collapse">
@@ -255,9 +255,9 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
       )}
 
       {(data.refs.facts.length > 0 || data.refs.sources.length > 0) && (
-        <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <section className="glass rounded-3xl border border-line bg-surface p-5">
           <h2 className="text-lg font-bold">참조 목록</h2>
-          <p className="mt-1 text-xs text-slate-500">산출물에 나오는 F·SRC 번호의 풀이입니다(이 스냅샷 시점 기준).</p>
+          <p className="mt-1 text-xs text-muted">산출물에 나오는 F·SRC 번호의 풀이입니다(이 스냅샷 시점 기준).</p>
           {data.refs.facts.length > 0 && (
             <div className="mt-2 overflow-x-auto">
               <table className="w-full min-w-[640px] border-collapse">
@@ -285,7 +285,7 @@ export function OutputView({ projectId, snapshotId }: { projectId: string; snaps
             </div>
           )}
           {data.refs.sources.length > 0 && (
-            <ul className="ml-5 mt-2 list-disc text-sm text-slate-800">
+            <ul className="ml-5 mt-2 list-disc text-sm text-ink">
               {data.refs.sources.map((s) => (
                 <li key={s.source_id}>
                   <span className="font-mono text-xs">{s.source_id}</span> {s.title}

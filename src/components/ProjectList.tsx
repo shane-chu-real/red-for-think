@@ -60,7 +60,7 @@ export function ProjectList() {
     <>
       <StatusBar status={status} title="기획 레드팀" />
       <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,4fr)]">
-        <Card title="새 프로젝트">
+        <Card title="새 프로젝트" className="min-w-0">
           <div className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="기획 유형">
@@ -97,16 +97,16 @@ export function ProjectList() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-800">참고 자료 (선택, 텍스트 붙여넣기)</span>
+                <span className="text-sm font-medium text-ink">참고 자료 (선택, 텍스트 붙여넣기)</span>
                 <Button variant="ghost" onClick={() => setSources([...sources, { title: "", text: "" }])}>
                   + 자료 추가
                 </Button>
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted">
                 파일 업로드는 지원하지 않습니다. PDF·Word 등은 내용을 복사해 붙여 주세요. 자료 1건 {LIMITS.sourceMaxChars.toLocaleString()}자, 합계 {LIMITS.sourcesTotalMaxChars.toLocaleString()}자까지이며, 넘으면 자르지 않고 거절합니다.
               </p>
               {sources.map((s, i) => (
-                <div key={i} className="space-y-2 rounded-md border border-slate-200 p-3">
+                <div key={i} className="space-y-2 rounded-2xl border border-line p-3">
                   <div className="flex gap-2">
                     <input className={inputClass} placeholder="자료 이름" value={s.title} onChange={(e) => setSources(sources.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))} />
                     <Button variant="secondary" onClick={() => setSources(sources.filter((_, j) => j !== i))}>
@@ -114,10 +114,10 @@ export function ProjectList() {
                     </Button>
                   </div>
                   <textarea className={inputClass} rows={4} placeholder="자료 내용을 붙여넣으세요" value={s.text} onChange={(e) => setSources(sources.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} />
-                  <p className="text-xs text-slate-500">{s.text.trim().length.toLocaleString()}자</p>
+                  <p className="text-xs text-muted">{s.text.trim().length.toLocaleString()}자</p>
                 </div>
               ))}
-              {sources.length > 0 && <p className="text-xs text-slate-500">합계 {total.toLocaleString()}자</p>}
+              {sources.length > 0 && <p className="text-xs text-muted">합계 {total.toLocaleString()}자</p>}
             </div>
 
             <ErrorNote message={error} />
@@ -127,15 +127,15 @@ export function ProjectList() {
           </div>
         </Card>
 
-        <Card title="최근 작업">
-          {projects === null && <p className="text-sm text-slate-500">불러오는 중…</p>}
-          {projects?.length === 0 && <p className="text-sm text-slate-500">아직 프로젝트가 없습니다.</p>}
-          <ul className="divide-y divide-slate-100">
+        <Card title="최근 작업" className="min-w-0">
+          {projects === null && <p className="text-sm text-muted">불러오는 중…</p>}
+          {projects?.length === 0 && <p className="text-sm text-muted">아직 프로젝트가 없습니다.</p>}
+          <ul className="divide-y divide-line-soft">
             {projects?.map((p) => (
               <li key={p.project_id} className="flex flex-wrap items-center gap-2 py-3">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-slate-900">{p.title}</p>
-                  <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                  <p className="truncate font-medium text-ink">{p.title}</p>
+                  <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
                     <Badge>{PROJECT_TYPE_LABELS[p.type]}</Badge>
                     <Badge tone="indigo">
                       {PHASE_LABELS[p.phase]}
@@ -145,7 +145,7 @@ export function ProjectList() {
                     <span>저장 {kst(p.updated_at)}</span>
                   </p>
                 </div>
-                <Link href={`/projects/${p.project_id}`} className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50">
+                <Link href={`/projects/${p.project_id}`} className="glass inline-flex min-h-10 items-center rounded-full border border-line bg-surface px-4 py-1.5 text-sm font-medium text-ink hover:bg-surface-2">
                   이어하기
                 </Link>
               </li>
