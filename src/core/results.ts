@@ -234,7 +234,34 @@ export function validateRunOutput<T extends Task>(task: T, text: string, payload
       break;
     }
   }
+  const foreign = foreignScript(value, JSON.stringify(payload.context));
+  if (foreign) errors.push(foreign);
   return errors.length ? { ok: false, errors } : { ok: true, value };
+}
+
+// 한국어가 아닌 글(중국어·일본어) 찾기: 입력(context)에 없던 한자·가나를 센다.
+// 2026-10-20 실사용: 새 모델이 정리 이유를 일본어로, 변경안을 중국어로 써서 그대로 화면에 나왔다.
+// 교정 요청의 '직전 응답'은 context가 아니라서, 앞선 시도의 중국어가 허용 글자로 섞이지 않는다.
+const FOREIGN_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/gu;
+const FOREIGN_TOLERANCE = 3; // 사(社) 같은 몇 글자 한자 표기는 넘어간다.
+
+export function foreignScript(output: unknown, context: string): string | null {
+  const known = new Set(context.match(FOREIGN_SCRIPT) ?? []);
+  const paths: string[] = [];
+  let total = 0;
+  const walk = (v: unknown, path: string) => {
+    if (typeof v === "string") {
+      const n = (v.match(FOREIGN_SCRIPT) ?? []).filter((ch) => !known.has(ch)).length;
+      if (n) {
+        total += n;
+        paths.push(path);
+      }
+    } else if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${path}[${i}]`));
+    else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, path ? `${path}.${k}` : k);
+  };
+  walk(output, "");
+  if (total <= FOREIGN_TOLERANCE) return null;
+  return `한국어가 아닌 글(중국어·일본어 문자 ${total}자)이 있습니다: ${paths.slice(0, 3).join(", ")}${paths.length > 3 ? " 등" : ""}. 모든 문장을 같은 뜻의 한국어로 다시 쓰십시오.`;
 }
 
 // ── 결과 반영 ────────────────────────────────────────────

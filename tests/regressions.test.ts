@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { mockOutput } from "@/core/mock";
 import { targetsChangedSince } from "@/core/plan";
 import type { RunPayload } from "@/core/prompts";
+import { foreignScript } from "@/core/results";
 import { unresolvedCritical } from "@/core/state";
 import type { DecisionStatus, PlanContent } from "@/core/types";
 import { viaBypass } from "@/server/http";
@@ -352,5 +353,54 @@ describe("요청 검사", () => {
     expect(viaBypass(new Request("https://app.example/api/projects", { headers: { "x-vercel-protection-bypass": "s" } }))).toBe(true);
     expect(viaBypass(new Request("https://app.example/api/projects?x-vercel-protection-bypass=s"))).toBe(true);
     expect(viaBypass(new Request("https://app.example/api/projects", { headers: { "x-vercel-set-bypass-cookie": "true" } }))).toBe(true);
+  });
+});
+
+describe("한국어가 아닌 AI 응답 (2026-10-20 실사용: 새 모델이 일본어·중국어로 답함)", () => {
+  const CHINESE = "需求調查建議從集團內符合年資與使用程度條件的候選人中選出";
+
+  it("중국어로 쓴 응답은 반영하지 않고 교정을 1회 요청하며, 교정 뒤에도 그러면 실패로 남긴다", async () => {
+    const h = await makeHarness();
+    let calls = 0;
+    h.override("intake", (p) => {
+      calls += 1;
+      const out = mock(p);
+      out.questions[0].text = CHINESE;
+      return out;
+    });
+    const id = await h.create({ type: "education", idea: "신입 300명 AI 교육", audience: "executive" });
+    await h.drain();
+    const s = await h.state(id);
+    expect(calls).toBe(2);
+    expect(s.pending_runs[0]).toMatchObject({ task: "intake", status: "failed", error_code: "AI_SCHEMA_ERROR" });
+    expect(s.pending_runs[0].error_message).toContain("한국어가 아닌 글");
+    expect(s.intake.questions.some((q) => /\p{Script=Han}/u.test(q.text))).toBe(false);
+  });
+
+  it("교정 요청에서 한국어로 고쳐 쓰면 그 결과를 반영한다", async () => {
+    const h = await makeHarness();
+    let calls = 0;
+    h.override("intake", (p) => {
+      calls += 1;
+      const out = mock(p);
+      if (calls === 1) out.questions[0].text = CHINESE;
+      else expect(p.input[0].content).toContain("한국어가 아닌 글");
+      return out;
+    });
+    const id = await h.create({ type: "education", idea: "신입 300명 AI 교육", audience: "executive" });
+    await h.drain();
+    const s = await h.state(id);
+    expect(calls).toBe(2);
+    expect(s.pending_runs).toEqual([]);
+    expect(s.intake.questions.length).toBeGreaterThan(0);
+    expect(s.intake.questions.some((q) => /\p{Script=Han}/u.test(q.text))).toBe(false);
+  });
+
+  it("자료에 원래 있는 한자와 몇 글자의 한자 표기는 넘어가고, 일본어 가나는 잡는다", () => {
+    expect(foreignScript({ text: "株式會社 자료를 인용합니다" }, JSON.stringify({ source: "株式會社 연혁" }))).toBeNull();
+    expect(foreignScript({ text: "본사(本社) 기준" }, "{}")).toBeNull();
+    const ja = foreignScript({ groups: [{ reason: "今回の探索承認は担当者が必要です" }] }, "{}");
+    expect(ja).toContain("groups[0].reason");
+    expect(ja).toContain("한국어로 다시 쓰십시오");
   });
 });

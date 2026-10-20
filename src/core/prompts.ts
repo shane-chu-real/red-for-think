@@ -42,6 +42,7 @@ export const COMMON_INSTRUCTIONS = `당신은 개인용 기획 토론 웹앱 '�
 
 [태도]
 - 한국어 존대어로 구체적으로 씁니다. 근거 없는 칭찬, 추상적인 공격("리스크가 있다" 같은 말), 인신공격을 하지 않습니다. 구체적으로 지적할 것이 없으면 없다고 반환합니다.
+- 모든 문장은 한국어(한글)로만 씁니다. 중국어·일본어 문장이나 한자 표기를 쓰지 않습니다. 자료에 원래 있는 고유명사와 영문 약어는 그대로 둡니다.
 - 사람이 읽는 문장에는 OPEN·RESOLVED·major 같은 내부 코드를 쓰지 않습니다. 쟁점 상태는 state_label의 표현(미대응, 해소 등)으로, 심각도는 치명·보완·사소로 씁니다. I-001·C-001·F-001·SRC-001 같은 ID는 그대로 씁니다.
 - 아이디어가 반드시 추진되어야 한다고 전제하지 않습니다. 현상 유지, 다른 대안, 범위 축소, 추가 조사, 중단도 검토합니다. 이번 결정이 탐색·파일럿·확대 중 무엇인지에 맞춰 필요한 근거 수준을 판단합니다.
 
@@ -430,7 +431,7 @@ export function buildRunPayload(task: Task, params: RunParams, state: ProjectSta
   const schema = strictJsonSchema(task);
   let developer = `출력 규칙: 아래 JSON Schema를 정확히 따르는 JSON 객체 하나만 출력합니다. 모든 필드를 넣고, 값이 없으면 빈 배열·빈 문자열·null(허용되는 곳)을 씁니다. 코드펜스나 설명을 붙이지 않습니다.\n작업 이름: ${task}\nJSON Schema:\n${JSON.stringify(schema)}`;
   if (params.correction_of) {
-    developer += `\n\n[교정 요청] 직전 응답이 검증을 통과하지 못했습니다. 아래 오류를 고쳐 다시 출력하십시오. 오류에서 요구한 부분만 고치고 나머지 내용은 유지합니다.\n오류: ${(params.correction_errors ?? []).join(" / ")}\n직전 응답:\n${params.previous_output ?? ""}`;
+    developer += `\n\n[교정 요청] 직전 응답이 검증을 통과하지 못했습니다. 아래 오류를 고쳐 다시 출력하십시오. 오류에서 요구한 부분만 고치고 나머지 내용은 유지합니다. 다만 한국어가 아닌 문장이 있으면 같은 뜻의 한국어로 고쳐 씁니다.\n오류: ${(params.correction_errors ?? []).join(" / ")}\n직전 응답:\n${params.previous_output ?? ""}`;
   }
   return {
     task,
